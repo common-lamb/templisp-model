@@ -1,8 +1,191 @@
-
 #start emacs from model env in shell
 #spacemacs/force-init-spacemacs-env
 # , n a activate model env
 # open inferior repl
+
+
+################
+# Contents
+################
+# * Setup
+# ** Import
+# ** Path and file selection
+# ** Global variables
+# ** Input validation
+# * AOI
+# ** Define
+# ** Create Grid
+# * Load EOpatch
+# ** Load rasters
+# ** Load timestamps etc
+# ** Load reference polygons
+# *** Bind identities and observations
+# *** Import vectors
+# *** Rasterize observations
+# ** Visualize layers
+# *** Object contents
+# *** RGB per time
+# *** Reference identities map
+# *** Rasterized observations
+# * Prepare eopatch
+# ** Concatenate
+# ** Erosion
+# ** Sampling
+# * Create training data
+# ** Extract eopatch
+# ** Reshape data
+# *** Split patches into train test for GBM
+# *** Shape for GBM
+# from t,w,h,f to n, m
+# where n is pixels ie. w*h&&& and m is features x timesteps
+# *** Split samples into train test for TST &&&
+# *** Shape for TSP
+# from t,w,h,f to s,v,t
+# where s is w*h, v is features, t is time
+# * GBM experiment
+# ** Train
+# ** Validate
+# *** F1 etc table
+# *** Confusion matrices
+# *** Class balance
+# *** ROC and AUC
+# *** Feature importance
+# ** Predict
+# *** visualize prediction
+# ** Quantify prediction
+# *** Visualize predicted trait
+# *** Visualize trait diff
+# *** Quantify agreement
+# * TST experiment
+# ** Train
+# *** Unsupervised training
+# *** Transfer learning
+# ** Validate
+# *** F1 etc table
+# *** Confusion matrices
+# *** Class balance
+# *** ROC and AUC
+# *** Feature importance
+# ** Predict
+# *** visualize prediction
+# ** Quantify prediction
+# *** Visualize predicted trait
+# *** Visualize trait diff
+# *** Quantify agreement
+
+
+
+################
+# * Setup
+################
+######### ** Import
+######### ** Path and file selection
+######### ** Global variables
+######### ** Input validation
+################
+# * AOI
+################
+######### ** Define
+######### ** Create Grid
+################
+# * Load EOpatch
+################
+######### ** Load rasters
+######### ** Load timestamps etc
+######### ** Load reference polygons
+#####
+# *** Bind identities and observations
+#####
+# *** Import vectors
+#####
+# *** Rasterize observations
+######### ** Visualize layers
+#####
+# *** Object contents
+#####
+# *** RGB per time
+#####
+# *** Reference identities map
+#####
+# *** Rasterized observations
+################
+# * Prepare eopatch
+################
+######### ** Concatenate
+######### ** Erosion
+######### ** Sampling
+################
+# * Create training data
+################
+######### ** Extract eopatch
+######### ** Reshape data
+#####
+# *** Split patches into train test for GBM
+#####
+# *** Shape for GBM
+# from t,w,h,f to n, m
+# where n is pixels ie. w*h&&& and m is features x timesteps
+#####
+# *** Split samples into train test for TST &&&
+#####
+# *** Shape for TSP
+# from t,w,h,f to s,v,t
+# where s is w*h, v is features, t is time
+################
+# * GBM experiment
+################
+######### ** Train
+######### ** Validate
+#####
+# *** F1 etc table
+#####
+# *** Confusion matrices
+#####
+# *** Class balance
+#####
+# *** ROC and AUC
+#####
+# *** Feature importance
+######### ** Predict
+#####
+# *** visualize prediction
+######### ** Quantify prediction
+#####
+# *** Visualize predicted trait
+#####
+# *** Visualize trait diff
+#####
+# *** Quantify agreement
+################
+# * TST experiment
+################
+######### ** Train
+#####
+# *** Unsupervised training
+#####
+# *** Transfer learning
+######### ** Validate
+#####
+# *** F1 etc table
+#####
+# *** Confusion matrices
+#####
+# *** Class balance
+#####
+# *** ROC and AUC
+#####
+# *** Feature importance
+######### ** Predict
+#####
+# *** visualize prediction
+######### ** Quantify prediction
+#####
+# *** Visualize predicted trait
+#####
+# *** Visualize trait diff
+#####
+# *** Quantify agreement
+
 
 import os
 import pathlib

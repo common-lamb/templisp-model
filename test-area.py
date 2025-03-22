@@ -328,7 +328,7 @@ area_grid(DATA_train)
 ######### ** Load rasters
 # identify layers
 def unique_tif_indicators(tifs=input_tifs(), used_indices=USED_INDICES):
-    " Return lists of unique dates, globally selected used_indices, and unique sigma values "
+    " Return correctly ordered lists of: unique dates, globally selected used_indices, and unique sigma values "
 
     rawdates = set()
     rawindices = set()
@@ -336,17 +336,16 @@ def unique_tif_indicators(tifs=input_tifs(), used_indices=USED_INDICES):
 
     for file in tifs:
         parsed = parse_identifiers(file)
+        # no expected match may be empty
+        if parsed['date'] == '' or parsed['index'] == '':
+            raise RuntimeError(f"A file has no unique match: {file}")
         rawdates.add(parsed['date'])
         rawindices.add(parsed['index'])
-        #&&& error
         rawsigmas.add(parsed['sigma'])
 
     # rawindices must be a superset of USED_INDICES
     if not set(used_indices) <= rawindices:
         raise AssertionError(f"The raw indices are not a super set of USED_INDICES. raw: {rawindices}")
-    # &&& test sets for missing elements, ''
-    # &&& other tests
-
 
     dates = sorted(list(rawdates)) # alphanumeric order is time order
     indices = used_indices  # use to impose sort by freq, known correct due to validation and subset test
@@ -356,28 +355,21 @@ def unique_tif_indicators(tifs=input_tifs(), used_indices=USED_INDICES):
             'indices':indices,
             'sigmas':sigmas}
 
-parsed_sets = unique_tif_indicators()
-dates = parsed_sets['dates']
-indices = parsed_sets['indices']
-sigmas = parsed_sets['sigmas']
+# tif file set handling tools
+def select_tif_path(select_date, select_index, select_sigma, tifs=input_tifs() ):
+    "Using intersect of dates indices and sigmas, return a single matching path"
+    a = set() # dates
+    b = set() # indices
+    c = set() # sigmas
 
-#### tif file set handling tools
-
-def select_tif_path(select_date, select_index, select_sigma):
-    "Using dates indices and sigmas, return a single matching path"
-    a = glob.glob(os.path.join(DATA_RASTERS, f"date_{select_date}*.tif"))
-    b = glob.glob(os.path.join(DATA_RASTERS, f"*index_{select_index}_sigma*.tif"))
-    a = set(a)
-    b = set(b)
-
-    c = set()
-    tifs = glob.glob(os.path.join(DATA_RASTERS, "*.tif"))
-    sigma_pat = re.compile(r'sigma-(.+?)\.tif')
-    for tif in tifs:
-        fileName = os.path.basename(tif)
-        sigma_match = sigma_pat.search(fileName)
-        if float(sigma_match.group(1)) == float(select_sigma):
-            c.add(tif)
+    for file in tifs:
+        parsed = parse_identifiers(file)
+        if parsed['date'] == select_date:
+            a.add(file)
+        if parsed['index'] == select_index:
+            b.add(file)
+        if float(parsed['sigma']) == float(select_sigma):
+            c.add(file)
 
     selected = a & b & c
     if len(selected) > 1:
@@ -386,7 +378,7 @@ def select_tif_path(select_date, select_index, select_sigma):
         raise ValueError(f"No match found")
     return list(selected)[0]
 
-# select_tif_path(dates[1], indices[2], sigmas[2])
+# select_tif_path(unique_tif_indicators()['dates'][1], unique_tif_indicators()['indices'][1], unique_tif_indicators()['sigmas'][1])
 
 def select_tif_set(date_list, index_list, sigma_list):
     "sets of tif files ordered as imposed in lists returned from unique_tif_indicators"
@@ -398,10 +390,14 @@ def select_tif_set(date_list, index_list, sigma_list):
                 selects.append(sel)
     return selects
 
-# select_tif_set(dates[0:], indices[0:1], sigmas[0:1])
-test = select_tif_set(dates[0:], indices[0:1], sigmas[0:1])
-for t in test:
-    print(t)
+# select_tif_set(unique_tif_indicators()['dates'][1:2], unique_tif_indicators()['indices'][1:2], unique_tif_indicators()['sigmas'][1:2])
+
+def all_ordered_tifs(dates=unique_tif_indicators()['dates'],indices=unique_tif_indicators()['indices'],sigmas=unique_tif_indicators()['sigmas'],):
+    selected = select_tif_set(dates, indices, sigmas)
+    return selected
+
+# all_ordered_tifs()
+
 ######### ** Load timestamps etc
 ######### ** Load reference polygons
 #####

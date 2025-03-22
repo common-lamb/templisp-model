@@ -35,12 +35,8 @@
 # ** Reshape data
 # *** Split patches into train test for GBM
 # *** Shape for GBM
-# from t,w,h,f to n, m
-# where n is pixels ie. w*h&&& and m is features x timesteps
 # *** Split samples into train test for TST &&&
 # *** Shape for TSP
-# from t,w,h,f to s,v,t
-# where s is w*h, v is features, t is time
 # * GBM experiment
 # ** Train
 # ** Validate
@@ -77,12 +73,12 @@
 ################
 # * Setup
 ################
+
 ######### ** Import
 import os
 import pathlib
 import glob
 import re
-import warnings
 from osgeo import gdal
 from collections import defaultdict
 import sys
@@ -116,13 +112,14 @@ from eolearn.features import NormalizedDifferenceIndexTask, SimpleFilterTask
 from eolearn.features.extra.interpolation import LinearInterpolationTask
 from eolearn.geometry import ErosionTask, VectorToRasterTask
 from eolearn.ml_tools import FractionSamplingTask
+
 ######### ** Path and file selection
 # input data
 DATA_ROOT= pathlib.Path("/bulk-2/2023-package")
 # set expected dirs
 DATA_AREAS = os.path.join(DATA_ROOT, "area_poly")
 DATA_IDS = os.path.join(DATA_ROOT, "id_poly")
-DATA_RASTERS = os.path.join(DATA_ROOT, "rasters")
+DATA_RASTERS = os.path.join(DATA_ROOT, "test-rasters") #dir rasters or test-rasters
 DATA_TABLE= os.path.join(DATA_ROOT, "tabular")
 # set expected files
 DATA_train = os.path.join(DATA_AREAS, "test-AOI-north.gpkg")
@@ -134,16 +131,19 @@ DATA_table = os.path.join(DATA_TABLE, "field-data.csv")
 # intermediate and output data
 DATA_OP_ROOT = os.path.join(DATA_ROOT, "..", "model_output")
 EOPATCH_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
+DATA_DIR= os.path.join(DATA_OP_ROOT, "data")
 EOPATCH_SAMPLES_DIR= os.path.join(DATA_OP_ROOT, "eopatches_sampled")
 RESULTS_DIR= os.path.join(DATA_OP_ROOT, "results")
 
 ######### ** Global variables
-np.random.seed(42)
-rndm_seed=42
+RNDM = 42
+np.random.seed(RNDM)
 CRS = "EPSG:32614"
-expected_n_tifs = 630
-expected_indices = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
-used_indices = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
+GRID_SIZE = 500 # pixel count of patch edge, reduce to relieve RAM
+RESOLUTION = 0.003 # gsd in meters
+EXPECTED_N_TIFS = 630
+EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
+USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
 ######### ** Input validation
 def dir_file_enforce():
@@ -155,31 +155,67 @@ def dir_file_enforce():
         if not os.path.exists(f):
             raise FileNotFoundError(f"Input file not found: {f}")
     # make exist
-    for d in (DATA_OP_ROOT, EOPATCH_DIR, EOPATCH_SAMPLES_DIR, RESULTS_DIR):
+    for d in (DATA_OP_ROOT, EOPATCH_DIR, DATA_DIR, EOPATCH_SAMPLES_DIR, RESULTS_DIR):
         os.makedirs(d, exist_ok=True)
 
-dir_file_enforce()
+def parse_identifiers(path):
+    "aaa&&&"
+    date_pat = re.compile(r'date_(.+?)_index')
+    index_pat = re.compile(r'index_(.+?)_sigma')
+    sigma_pat = re.compile(r'sigma-(.+?)\.tif')
 
-def validate_input_files():
+    fileName = os.path.basename(path)
+
+    date_found = str()
+    index_found = str()
+    sigma_found = str()
+
+    date_match = date_pat.search(fileName)
+    if date_match:
+        date_found = (date_match.group(1))
+    else:
+        print(f"WARNING: No date match found in the path: {path}")
+
+    index_match = index_pat.search(fileName)
+    if index_match:
+        index_found  = (index_match.group(1))
+    else:
+        print(f"WARNING: No index match found in the path: {path}")
+
+    sigma_match = sigma_pat.search(fileName)
+    if sigma_match:
+        sigma_found = (sigma_match.group(1))
+    else:
+        print(f"WARNING: No sigma match found in the path: {path}")
+
+    return {'date':date_found,
+            'index':index_found,
+            'sigma':sigma_found}
+
+
+def input_tifs():
+    tifs = glob.glob(os.path.join(DATA_RASTERS, "*.tif"))
+    return tifs
+
+def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, expected_indices=EXPECTED_INDICES, used_indices=USED_INDICES):
     "Validate expected qualities of input tifs."
 
     # check n of tifs as expected
-    tifs = glob.glob(os.path.join(DATA_RASTERS, "*.tif"))
-    if not len(tifs) == expected_n_tifs:
+    if not len(tifs) ==  expected_n_tifs:
         raise Error(f"The number of tifs is not the expected {expected_n_tifs}. Found: {len(tifs)}")
 
     # check indices are as expected
     indices = set()
-    index_pat = re.compile(r'index_(.+?)_sigma')
     for tif in tifs:
-        fileName = os.path.basename(tif)
-        index_match = index_pat.search(fileName)
-        if index_match:
-            indices.add(index_match.group(1))
+        index = parse_identifiers(tif)['index']
+        indices.add(index)
     if not indices ==  set(expected_indices):
         raise ValueError(f"The indices are not those expected. Found: {indices}")
+    # check globally set using is subset of found
+    if not(set(used_indices) <= indices):
+        raise ValueError("Expected found unique indices to be a superset of used_indices")
 
-    # all same projection all same extent
+    # all share projection, shape and extent
     ref_ds = gdal.Open(tifs[0])
     ref_proj = ref_ds.GetProjection()
     ref_geotransform = ref_ds.GetGeoTransform()
@@ -196,14 +232,15 @@ def validate_input_files():
             print(os.path.basename(tif))
         if (ds.RasterYSize, ds.RasterXSize) != ref_shape:
             raise ValueError (f"Shape mismatch in {tif}")
+
     # crs checks
     for f in [DATA_train, DATA_test, DATA_all, DATA_ids]:
         extent = gpd.read_file(f)
         crs = extent.crs
         if not crs == CRS:
-            print(f)
-            raise ValueError(f"Unexpected crs: {crs}")
+            raise ValueError(f"Unexpected crs for file: {f} crs: {crs}")
 
+dir_file_enforce()
 validate_input_files()
 
 
@@ -211,69 +248,118 @@ validate_input_files()
 # * AOI
 ################
 ######### ** Define
-# Load geopackage file
-extent_train = gpd.read_file(DATA_train)
 
-# Get the shape in polygon format
-extent_train_shape = extent_train.geometry.values[0]
-# Print size
-width = extent_train_shape.bounds[2] - extent_train_shape.bounds[0]
-height = extent_train_shape.bounds[3] - extent_train_shape.bounds[1]
-print(f"Dimension of the area is: {width:.0f} x {height:.0f} m")
+def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION):
+    """
+   read in gpkg file compute patches by pixels
 
-# Plot
-plt.ion()
-extent_train.plot()
-plt.axis("off")
-plt.close()
+    Args:
+        area: the AOI geopackage with area shape
+        grid_size: patch size to split the AOI into
+        resolution: gsd of data in meters
+    Return:
+        bbox-list: an array of bounding boxes
+    """
+
+    # Load geopackage file
+    extent = gpd.read_file(area)
+    # Get the shape in polygon format
+    extent_shape = extent.geometry.values[0]
+    # get the width and height of the area in meters
+    width = extent_shape.bounds[2] - extent_shape.bounds[0]
+    height = extent_shape.bounds[3] - extent_shape.bounds[1]
+    print(f"Dimension of the area is: {width:.0f} x {height:.0f} m")
+    # get the width and height of the area in pixels
+    width_pix = int(width / resolution)
+    height_pix = int(height / resolution)
+    print(f"Dimension of the area is {width_pix} x {height_pix} pixels")
+    # &&& get the number of grid cells wide and tall our area is
+    # get the width and height of the area in patches
+    width_patch = int(round(width_pix / grid_size))
+    height_patch =  int(round(height_pix / grid_size))
+    print(f"Dimension (rounded) of the area is {width_patch} x {height_patch} patches")
+    # length of patch edge m=(m/px)*px
+    edge_m =resolution*grid_size
+
+    # Plot
+    plt.ion()
+    extent.plot()
+    plt.axis("off")
+    plt.close()
+
+    # Create a splitter to obtain a list of bboxes
+    bbox_splitter = UtmZoneSplitter([extent_shape], extent.crs, edge_m)
+    bbox_list = np.array(bbox_splitter.get_bbox_list())
+    info_list = np.array(bbox_splitter.get_info_list())
+
+    # Prepare info of selected EOPatches
+    geometry = [Polygon(bbox.get_polygon()) for bbox in bbox_list]
+    idxs = [info["index"] for info in info_list]
+    idxs_x = [info["index_x"] for info in info_list]
+    idxs_y = [info["index_y"] for info in info_list]
+    bbox_gdf = gpd.GeoDataFrame({"index": idxs, "index_x": idxs_x, "index_y": idxs_y}, crs=extent.crs, geometry=geometry)
+
+    #collect patches
+    patch_ids = []
+    for idx, info in enumerate(info_list):
+        patch_ids.append(idx)
+    # &&& Change the order of the patches (useful for plotting)
+    # patch_ids = np.transpose(np.fliplr(np.array(patch_ids).reshape(5, 5))).ravel()
+
+
+    # Display bboxes over country
+    fig, ax = plt.subplots(figsize=(30, 30))
+    ax.set_title(f"Area: {area}, partitioned to patches", fontsize=25)
+    extent.plot(ax=ax, facecolor="w", edgecolor="b", alpha=0.5) # area shape
+    bbox_gdf.plot(ax=ax, facecolor="w", edgecolor="r", alpha=0.5) # patch grid
+    for bbox, info in zip(bbox_list, info_list):
+        geo = bbox.geometry
+        ax.text(geo.centroid.x, geo.centroid.y, info["index"], ha="center", va="center")
+    plt.axis("off");
+
+    return bbox_list
 
 ######### ** Create Grid
-# &&& split into parts to fit RAM
+area_grid(DATA_train)
 
 ################
 # * Load EOpatch
 ################
 ######### ** Load rasters
 # identify layers
-def unique_tif_indicators():
+def unique_tif_indicators(tifs=input_tifs(), used_indices=USED_INDICES):
     " Return lists of unique dates, globally selected used_indices, and unique sigma values "
 
-    tifs = glob.glob(os.path.join(DATA_RASTERS, "*.tif"))
-
-    dates = set()
-    indices = set()
-    sigmas = set()
-
-    date_pat = re.compile(r'date_(.+?)_index')
-    index_pat = re.compile(r'index_(.+?)_sigma')
-    sigma_pat = re.compile(r'sigma-(.+?)\.tif')
+    rawdates = set()
+    rawindices = set()
+    rawsigmas = set()
 
     for file in tifs:
-        fileName = os.path.basename(file)
-        date_match = date_pat.search(fileName)
-        if date_match:
-            dates.add(date_match.group(1))
-        index_match = index_pat.search(fileName)
-        if index_match:
-            indices.add(index_match.group(1))
-        sigma_match = sigma_pat.search(fileName)
-        if sigma_match:
-            sigmas.add(sigma_match.group(1))
+        parsed = parse_identifiers(file)
+        rawdates.add(parsed['date'])
+        rawindices.add(parsed['index'])
+        #&&& error
+        rawsigmas.add(parsed['sigma'])
 
-    # check globally set using is subset of found
-    if not(set(used_indices) <= indices):
-        raise ValueError("Expected found unique indices to be a superset of used_indices")
+    # rawindices must be a superset of USED_INDICES
+    if not set(used_indices) <= rawindices:
+        raise AssertionError(f"The raw indices are not a super set of USED_INDICES. raw: {rawindices}")
+    # &&& test sets for missing elements, ''
+    # &&& other tests
 
-    dates = sorted(list(dates)) # alphanumeric order is time order
+
+    dates = sorted(list(rawdates)) # alphanumeric order is time order
     indices = used_indices  # use to impose sort by freq, known correct due to validation and subset test
-    sigmas = sorted(list(map(float, sigmas)))
-    print(dates)
-    print(indices)
-    print(sigmas)
+    sigmas = sorted(list(map(float, rawsigmas))) # sorted list of numbers
 
-    return dates, indices, sigmas
+    return {'dates':dates,
+            'indices':indices,
+            'sigmas':sigmas}
 
-dates, indices, sigmas = unique_tif_indicators()
+parsed_sets = unique_tif_indicators()
+dates = parsed_sets['dates']
+indices = parsed_sets['indices']
+sigmas = parsed_sets['sigmas']
 
 #### tif file set handling tools
 

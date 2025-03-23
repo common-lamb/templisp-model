@@ -325,8 +325,10 @@ area_grid(DATA_train)
 ################
 # * Load EOpatch
 ################
+
 ######### ** Load rasters
-# identify layers
+
+# tif file set handling tools
 def unique_tif_indicators(tifs=input_tifs(), used_indices=USED_INDICES):
     " Return correctly ordered lists of: unique dates, globally selected used_indices, and unique sigma values "
 
@@ -355,7 +357,6 @@ def unique_tif_indicators(tifs=input_tifs(), used_indices=USED_INDICES):
             'indices':indices,
             'sigmas':sigmas}
 
-# tif file set handling tools
 def select_tif_path(select_date, select_index, select_sigma, tifs=input_tifs() ):
     "Using intersect of dates indices and sigmas, return a single matching path"
     a = set() # dates
@@ -377,7 +378,6 @@ def select_tif_path(select_date, select_index, select_sigma, tifs=input_tifs() )
     if len(selected) == 0:
         raise ValueError(f"No match found")
     return list(selected)[0]
-
 # select_tif_path(unique_tif_indicators()['dates'][1], unique_tif_indicators()['indices'][1], unique_tif_indicators()['sigmas'][1])
 
 def select_tif_set(date_list, index_list, sigma_list):
@@ -389,14 +389,61 @@ def select_tif_set(date_list, index_list, sigma_list):
                 sel = select_tif_path(i, j, k)
                 selects.append(sel)
     return selects
-
 # select_tif_set(unique_tif_indicators()['dates'][1:2], unique_tif_indicators()['indices'][1:2], unique_tif_indicators()['sigmas'][1:2])
+
+# len( select_tif_set(unique_tif_indicators()['dates'],['red'],[2.0]))
 
 def all_ordered_tifs(dates=unique_tif_indicators()['dates'],indices=unique_tif_indicators()['indices'],sigmas=unique_tif_indicators()['sigmas'],):
     selected = select_tif_set(dates, indices, sigmas)
     return selected
-
 # all_ordered_tifs()
+
+# define tasks for load workflow
+class MultiLoader(EOTask):
+    def __init__(self, dates, indices, sigmas):
+        self.dates = dates
+        self.indices = indices
+        self.sigmas = sigmas
+
+    def _toDatetime(self, stringlist):
+        fmt = '%Y-%m-%d'
+        return [datetime.datetime.strptime(s, fmt) for s in stringlist]
+
+    def _toNParray(self, tiffs):
+        # Open and stack the tiffs
+        tiff_stack = []
+        for path in tiffs:
+            with rasterio.open(path) as src:
+                tiff_stack.append(src.read(1))  # Read the first band
+
+        # Convert to numpy array and reshape
+        tiff_array = np.array(tiff_stack)
+        # &&& modify channel dimension targeting t,h,w,c where c is 1
+        reshaped_array = np.expand_dims(tiff_array, axis=-1)
+        # - Before: `tiff_array.shape = (t, height, width)`
+        # - After: `tiff_array.shape = (t, height, width, 1)`
+        # &&& confirm this
+        return reshaped_array
+
+    def execute(self, eopatch, bbox):
+        eopatch.bbox = bbox
+        eopatch.timestamps = self._toDatetime(self.dates)
+        for i in self.indices:
+            for s in self.sigmas:
+                name = f"index_{i}_sigma_{s}"
+                tiffs = select_tif_set(self.dates, [i], [s])
+                array = self._toNParray(tiffs)
+                eopatch[FeatureType.DATA, name] = array
+        return eopatch
+
+# &&& valid mask
+# &&& save task
+
+# &&& node list
+# &&& workflow
+# &&& argument builder
+# &&& executor
+
 
 ######### ** Load timestamps etc
 ######### ** Load reference polygons

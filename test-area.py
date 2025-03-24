@@ -1,7 +1,7 @@
 #start emacs from model env in shell
-#spacemacs/force-init-spacemacs-env
+# M-x spacemacs/force-init-spacemacs-env
 # , n a activate model env
-# open inferior repl
+# , ' open inferior repl
 
 ################
 # Contents
@@ -80,10 +80,12 @@ import pathlib
 import glob
 import re
 from osgeo import gdal
+from fiona.collection import BytesCollection
 from collections import defaultdict
 import sys
 import itertools
 import joblib
+import pandas as pd
 from pandas._config import dates
 from tqdm.auto import tqdm
 import datetime
@@ -94,6 +96,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 from aenum import MultiValueEnum
 from shapely.geometry import Polygon
 import lightgbm as lgb
+import rasterio
 import geopandas as gpd
 from sentinelhub import DataCollection, UtmZoneSplitter
 
@@ -390,13 +393,7 @@ def select_tif_set(date_list, index_list, sigma_list):
                 selects.append(sel)
     return selects
 # select_tif_set(unique_tif_indicators()['dates'][1:2], unique_tif_indicators()['indices'][1:2], unique_tif_indicators()['sigmas'][1:2])
-
 # len( select_tif_set(unique_tif_indicators()['dates'],['red'],[2.0]))
-
-def all_ordered_tifs(dates=unique_tif_indicators()['dates'],indices=unique_tif_indicators()['indices'],sigmas=unique_tif_indicators()['sigmas'],):
-    selected = select_tif_set(dates, indices, sigmas)
-    return selected
-# all_ordered_tifs()
 
 # define tasks for load workflow
 class MultiLoader(EOTask):
@@ -415,7 +412,6 @@ class MultiLoader(EOTask):
         for path in tiffs:
             with rasterio.open(path) as src:
                 tiff_stack.append(src.read(1))  # Read the first band
-
         # Convert to numpy array and reshape
         tiff_array = np.array(tiff_stack)
         # &&& modify channel dimension targeting t,h,w,c where c is 1
@@ -425,34 +421,128 @@ class MultiLoader(EOTask):
         # &&& confirm this
         return reshaped_array
 
-    def execute(self, eopatch, bbox):
+    def _make_safe_name(self, i, s):
+        unsafe = f"index_{i}_sigma_{s}"
+        # need to drop decimals,invalid in feature names
+        safe = unsafe.replace('.', '-')
+        return safe
+
+    def execute(self, bbox):
+        eopatch = EOPatch(bbox=bbox)
         eopatch.bbox = bbox
         eopatch.timestamps = self._toDatetime(self.dates)
         for i in self.indices:
             for s in self.sigmas:
-                name = f"index_{i}_sigma_{s}"
+                name = self._make_safe_name(i, s)
                 tiffs = select_tif_set(self.dates, [i], [s])
                 array = self._toNParray(tiffs)
                 eopatch[FeatureType.DATA, name] = array
         return eopatch
 
-# &&& valid mask
-# &&& save task
-
-# &&& node list
-# &&& workflow
-# &&& argument builder
-# &&& executor
-
 
 ######### ** Load timestamps etc
+# &&& valid mask
+
 ######### ** Load reference polygons
 #####
 # *** Bind identities and observations
+
+def bind_observations(polygons=DATA_ids, observations=DATA_table ):
+    "Append table of observation data to polygons, ensure common column, then row bind on samples. Returns: fiona readable object"
+    gdf = gpd.read_file(polygons)
+    df = pd.read_csv(observations)
+    # ensure commmon attribute
+    # gdf.columns
+    # df.columns
+    df.rename(columns={'SAMPLE': 'sample'}, inplace=True)
+    # merge
+    merged_gdf = gdf.merge(df, on='sample', how='left')
+    merged_gdf.columns
+    # re code for fiona intake
+    geojson = merged_gdf.to_json()
+    byte_encoded = BytesCollection(geojson.encode('utf-8'))
+    return byte_encoded
+
+
 #####
 # *** Import vectors
+vector_feature = FeatureType.VECTOR_TIMELESS, "IDENTITIES"
+
+
 #####
 # *** Rasterize observations
+rasterize_height_task = VectorToRasterTask(
+    vector_feature, # match that used in vector import task
+    (FeatureType.MASK_TIMELESS, "HEIGHT"), #name new layer &&&
+    values_column="HEIGHT-CM", # col of merged_gdf.columns to rasterize
+    raster_shape=(FeatureType.MASK, "IN_POLYGON"),
+    raster_dtype=np.uint8,
+
+'''
+merged_gdf.columns
+
+Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
+       'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
+       'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED',
+       'SBLOTCH-LMH'],
+      dtype='object')
+'''
+# &&& initialize nodes
+load_task = MultiLoader(dates=unique_tif_indicators()['dates'],
+                              indices=unique_tif_indicators()['indices'],
+                              sigmas=unique_tif_indicators()['sigmas'])
+
+vector_import_task = VectorImportTask(vector_feature, bind_observations())
+
+save_task = SaveTask(EOPATCH_DIR, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
+# &&& node list
+workflow_nodes = linearly_connect_tasks(load_task, save_task)
+# &&& workflow
+workflow = EOWorkflow(workflow_nodes)
+# &&& additional arguments
+execution_args = []
+for idx, bbox in enumerate(area_grid(DATA_test)):
+    execution_args.append(
+        {
+            workflow_nodes[0]: {"bbox": bbox}, # load task is first
+            workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"}, # save task is last
+        }
+    )
+
+
+# Execute the workflow
+executor = EOExecutor(workflow, execution_args, save_logs=True)
+executor.run(workers=4)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+executor.make_report()
+
+failed_ids = executor.get_failed_executions()
+if failed_ids:
+    raise RuntimeError(
+        f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
+        f"For more info check report at {executor.get_report_path()}"
+    )
+# &&& executor
+
 ######### ** Visualize layers
 #####
 # *** Object contents

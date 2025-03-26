@@ -100,6 +100,7 @@ import rasterio
 import geopandas as gpd
 from sentinelhub import DataCollection, UtmZoneSplitter
 
+from eolearn.core.core_tasks import CreateEOPatchTask, RemoveFeatureTask
 from eolearn.core import (EOExecutor,
                           EOPatch,
                           EOTask,
@@ -111,6 +112,7 @@ from eolearn.core import (EOExecutor,
                           SaveTask,
                           linearly_connect_tasks,)
 from eolearn.io import ImportFromTiffTask, ExportToTiffTask, VectorImportTask
+from eolearn.core.eonode import EONode
 from eolearn.features import NormalizedDifferenceIndexTask, SimpleFilterTask
 from eolearn.features.extra.interpolation import LinearInterpolationTask
 from eolearn.geometry import ErosionTask, VectorToRasterTask
@@ -212,6 +214,12 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
     for tif in tifs:
         index = parse_identifiers(tif)['index']
         indices.add(index)
+        # print nodata value if weird
+        with rasterio.open(tif) as src:
+            nd_value = src.nodata
+            if nd_value != -10000:
+                print(f"gtiff: {tif}")
+                print(f"Nodata value: {nd_value}")
     if not indices ==  set(expected_indices):
         raise ValueError(f"The indices are not those expected. Found: {indices}")
     # check globally set using is subset of found
@@ -245,6 +253,9 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
 
 dir_file_enforce()
 validate_input_files()
+# for test are and for full area
+# &&& 2023-09-05 potential geotransform mismatch
+# &&& 2023-07-24 Nodata value is None
 
 
 ################
@@ -396,52 +407,113 @@ def select_tif_set(date_list, index_list, sigma_list):
 # len( select_tif_set(unique_tif_indicators()['dates'],['red'],[2.0]))
 
 # define tasks for load workflow
-class MultiLoader(EOTask):
-    def __init__(self, dates, indices, sigmas):
-        self.dates = dates
-        self.indices = indices
-        self.sigmas = sigmas
+def make_workflow_name(n, i, s):
+    "assemble name for the date-set of tiffs, like 0000_index_<>_sigma_<>-<> "
+    # pad the counter to maintain ordering
+    zeroPaddedN = f"{n:0{4}d}"
+    unsafe = f"{zeroPaddedN}_index_{i}_sigma_{s}"
+    # need to drop decimals,invalid in feature names
+    safe = unsafe.replace('.', '-')
+    return safe
 
+def taskList_to_nodeList(taskList):
+    "connects a list of tasks as EONodes, returning a list of nodes"
+    nodes = []
+    node_previous = None
+
+    for task in taskList:
+        node_current = None
+        if node_previous is None:
+            # the first node has no previous dependency
+            node_current = EONode(task)
+        else:
+            # all other nodes depend on the previous
+            node_current = EONode(task, inputs=[node_previous])
+        # add the Node and assign previous
+        nodes.append(node_current)
+        node_previous = node_current
+    return nodes
+
+def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
+    """
+    Creates a workflow to import tiffs individually, concatenate sets on the time axis, and delete the individuals.
+    Args:
+    indicators=unique_tif_indicators() order of dates,indices,sigmas determines final order in eopatch
+    areas=area_grid(DATA_train) or area_grid(DATA_test) grid determines parallell processing and patch size
+    Rets:
+    workflow
+    execution_args for workflow
+    """
+
+    dates = indicators['dates']
+    indices = indicators['indices']
+    sigmas = indicators['sigmas']
+
+    n = 0 # counter padded and prepended to name to force ordering of sets
+    tasklist = [] # aggregate the set of tasks
+    create_task = CreateEOPatchTask() # initialize, will accept bbox for the entire chain
+    tasklist.append(create_task)
+    #SET actions, all dates are used
+    for i in indices:
+        for s in sigmas:
+            name_set = make_workflow_name(n, i, s)
+            tiffs = select_tif_set(dates, [i], [s])
+            #SINGLE actions
+            m = 0 # identifiers for singles of a set, pad and prepend
+            single_list = []
+            for tif in tiffs:
+                name_single = f"{m:0{3}d}_{name_set}"
+                single_data_feature = (FeatureType.DATA_TIMELESS, name_single)
+                load_task = ImportFromTiffTask(feature=single_data_feature, path=tif)
+                tasklist.append(load_task)
+                single_list.append(single_data_feature)
+                m = m + 1
+            # concatenate all single layers to a set
+            set_data_feature = (FeatureType.DATA, name_set)
+            # zip_function: concat along time to 3d (t*h*w), expand dims to 4d (t*h*w*c) where c is 1
+            merge_task = MergeFeatureTask(single_list, set_data_feature, zip_function=lambda *f: np.expand_dims(np.concatenate(f, axis=0), axis=-1))
+            tasklist.append(merge_task)
+            # delete task
+            remove_task = RemoveFeatureTask(single_list)
+            tasklist.append(remove_task)
+            n = n + 1
+    save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_PATCH)
+    tasklist.append(save_task)
+
+    workflow_nodes = taskList_to_nodeList(tasklist)
+    workflow = EOWorkflow(workflow_nodes)
+    # additional arguments
+    execution_args = []
+    for idx, bbox in enumerate(areas):
+        args_dict = {workflow_nodes[0]: {"bbox": bbox}, # create task is first
+                     workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"} # save task is last
+                     }
+        execution_args.append(args_dict)
+    return workflow, execution_args
+
+def load_train_eopatches():
+    # Execute the workflow
+
+    wf, args = CreateLoaderWorkflow(indicators=unique_tif_indicators(),
+                                    areas=area_grid(DATA_train),
+                                    eopatch_dir=EOPATCH_DIR )
+    executor = EOExecutor(wf, args, save_logs=True)
+    executor.run(workers=1) # workers must be 1 to avoid pickling error
+    executor.make_report()
+    failed_ids = executor.get_failed_executions()
+    if failed_ids:
+        raise RuntimeError(
+            f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
+            f"For more info check report at {executor.get_report_path()}"
+        )
+
+######### ** Load timestamps etc
+# &&& timestamps task
     def _toDatetime(self, stringlist):
         fmt = '%Y-%m-%d'
         return [datetime.datetime.strptime(s, fmt) for s in stringlist]
-
-    def _toNParray(self, tiffs):
-        # Open and stack the tiffs
-        tiff_stack = []
-        for path in tiffs:
-            with rasterio.open(path) as src:
-                tiff_stack.append(src.read(1))  # Read the first band
-        # Convert to numpy array and reshape
-        tiff_array = np.array(tiff_stack)
-        # &&& modify channel dimension targeting t,h,w,c where c is 1
-        reshaped_array = np.expand_dims(tiff_array, axis=-1)
-        # - Before: `tiff_array.shape = (t, height, width)`
-        # - After: `tiff_array.shape = (t, height, width, 1)`
-        # &&& confirm this
-        return reshaped_array
-
-    def _make_safe_name(self, i, s):
-        unsafe = f"index_{i}_sigma_{s}"
-        # need to drop decimals,invalid in feature names
-        safe = unsafe.replace('.', '-')
-        return safe
-
-    def execute(self, bbox):
-        eopatch = EOPatch(bbox=bbox)
-        eopatch.bbox = bbox
-        eopatch.timestamps = self._toDatetime(self.dates)
-        for i in self.indices:
-            for s in self.sigmas:
-                name = self._make_safe_name(i, s)
-                tiffs = select_tif_set(self.dates, [i], [s])
-                array = self._toNParray(tiffs)
-                eopatch[FeatureType.DATA, name] = array
-        return eopatch
-
-
-######### ** Load timestamps etc
-# &&& valid mask
+    eopatch.timestamps = self._toDatetime(self.dates)
+# &&& valid mask task
 
 ######### ** Load reference polygons
 #####
@@ -470,16 +542,19 @@ vector_feature = FeatureType.VECTOR_TIMELESS, "IDENTITIES"
 
 
 #####
-# *** Rasterize observations
+# *** Rasterize observations &&&
 rasterize_height_task = VectorToRasterTask(
     vector_feature, # match that used in vector import task
     (FeatureType.MASK_TIMELESS, "HEIGHT"), #name new layer &&&
     values_column="HEIGHT-CM", # col of merged_gdf.columns to rasterize
     raster_shape=(FeatureType.MASK, "IN_POLYGON"),
     raster_dtype=np.uint8,
+)
+
 
 '''
 merged_gdf.columns
+valid for test df &&&
 
 Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
        'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
@@ -496,12 +571,13 @@ vector_import_task = VectorImportTask(vector_feature, bind_observations())
 
 save_task = SaveTask(EOPATCH_DIR, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 # &&& node list
+
 workflow_nodes = linearly_connect_tasks(load_task, save_task)
 # &&& workflow
 workflow = EOWorkflow(workflow_nodes)
 # &&& additional arguments
 execution_args = []
-for idx, bbox in enumerate(area_grid(DATA_test)):
+for idx, bbox in enumerate(area_grid(DATA_train)):
     execution_args.append(
         {
             workflow_nodes[0]: {"bbox": bbox}, # load task is first
@@ -509,31 +585,11 @@ for idx, bbox in enumerate(area_grid(DATA_test)):
         }
     )
 
-
 # Execute the workflow
 executor = EOExecutor(workflow, execution_args, save_logs=True)
 executor.run(workers=4)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-executor.make_report()
 
 failed_ids = executor.get_failed_executions()
 if failed_ids:
@@ -541,13 +597,21 @@ if failed_ids:
         f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
         f"For more info check report at {executor.get_report_path()}"
     )
-# &&& executor
 
 ######### ** Visualize layers
 #####
 # *** Object contents
+# EOPATCH_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
+eopatch = EOPatch.load(os.path.join(EOPATCH_DIR, 'eopatch_0'))
+eopatch
+eopatch.timestamps
+data_keys = sorted(list(eopatch.data.keys()))
+data_keys
+
 #####
 # *** RGB per time
+eopatch.plot((FeatureType.DATA, data_keys[9]))
+#&&& make vis on load to check
 #####
 # *** Reference identities map
 #####
@@ -629,3 +693,51 @@ if failed_ids:
 # *** Visualize trait diff
 #####
 # *** Quantify agreement
+
+
+
+
+############################################
+
+class MultiLoader(EOTask):
+    def __init__(self, dates, indices, sigmas):
+        self.dates = dates
+        self.indices = indices
+        self.sigmas = sigmas
+    def _toDatetime(self, stringlist):
+        fmt = '%Y-%m-%d'
+        return [datetime.datetime.strptime(s, fmt) for s in stringlist]
+    def _toNParray(self, tiffs):
+        # Open and stack the tiffs
+        tiff_stack = []
+        for path in tiffs:
+            with rasterio.open(path) as src:
+                tiff_stack.append(src.read(1))  # Read the first band
+        # Convert to numpy array and reshape
+        tiff_array = np.array(tiff_stack)
+        # &&& modify channel dimension targeting t,h,w,c where c is 1
+        reshaped_array = np.expand_dims(tiff_array, axis=-1)
+        # - Before: `tiff_array.shape = (t, height, width)`
+        # - After: `tiff_array.shape = (t, height, width, 1)`
+        # &&& confirm this
+        return reshaped_array
+    def _make_safe_name(self, n, i, s):
+        # pad the counter to maintain ordering
+        zeroPaddedN = f"{n:0{4}d}"
+        unsafe = f"{zeroPaddedN}_index_{i}_sigma_{s}"
+        # need to drop decimals,invalid in feature names
+        safe = unsafe.replace('.', '-')
+        return safe
+    def execute(self, bbox):
+        eopatch = EOPatch(bbox=bbox)
+        eopatch.timestamps = self._toDatetime(self.dates)
+        eopatch.bbox = bbox
+        n = 0 # make counter and add to name to force ordering
+        for i in self.indices:
+            for s in self.sigmas:
+                name = self._make_safe_name(n, i, s)
+                tiffs = select_tif_set(self.dates, [i], [s])
+                array = self._toNParray(tiffs)
+                eopatch[FeatureType.DATA, name] = array
+                n = n + 1
+        return eopatch

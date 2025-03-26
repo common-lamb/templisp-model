@@ -263,7 +263,7 @@ validate_input_files()
 ################
 ######### ** Define
 
-def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION):
+def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
     """
    read in gpkg file compute patches by pixels
 
@@ -291,15 +291,15 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION):
     # get the width and height of the area in patches
     width_patch = int(round(width_pix / grid_size))
     height_patch =  int(round(height_pix / grid_size))
-    print(f"Dimension (rounded) of the area is {width_patch} x {height_patch} patches")
+    print(f"Dimension of the area is {width_patch} x {height_patch} patches (rounded to nearest full patch)")
     # length of patch edge m=(m/px)*px
     edge_m =resolution*grid_size
 
-    # Plot
-    plt.ion()
-    extent.plot()
-    plt.axis("off")
-    plt.close()
+    # if show:
+    #     plt.ion()
+    #     extent.plot()
+    #     plt.axis("off")
+    #     plt.close()
 
     # Create a splitter to obtain a list of bboxes
     bbox_splitter = UtmZoneSplitter([extent_shape], extent.crs, edge_m)
@@ -317,23 +317,25 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION):
     patch_ids = []
     for idx, info in enumerate(info_list):
         patch_ids.append(idx)
-    # &&& Change the order of the patches (useful for plotting)
-    # patch_ids = np.transpose(np.fliplr(np.array(patch_ids).reshape(5, 5))).ravel()
 
+    if show:
+        # Plot the polygon and its partitions
 
-    # Display bboxes over country
-    fig, ax = plt.subplots(figsize=(30, 30))
-    ax.set_title(f"Area: {area}, partitioned to patches", fontsize=25)
-    extent.plot(ax=ax, facecolor="w", edgecolor="b", alpha=0.5) # area shape
-    bbox_gdf.plot(ax=ax, facecolor="w", edgecolor="r", alpha=0.5) # patch grid
-    for bbox, info in zip(bbox_list, info_list):
-        geo = bbox.geometry
-        ax.text(geo.centroid.x, geo.centroid.y, info["index"], ha="center", va="center")
-    plt.axis("off");
+        plt.ion()
+        fig, ax = plt.subplots(figsize=(30, 30))
+        ax.set_title(f"Area: {area}, partitioned to patches", fontsize=25)
+        extent.plot(ax=ax, facecolor="w", edgecolor="b", alpha=0.5) # area shape
+        bbox_gdf.plot(ax=ax, facecolor="w", edgecolor="r", alpha=0.5) # patch grid
+        for bbox, info in zip(bbox_list, info_list):
+            geo = bbox.geometry
+            ax.text(geo.centroid.x, geo.centroid.y, info["index"], ha="center", va="center")
+        plt.axis("off");
 
+    print(f"Total patches is: {len(bbox_list)}")
     return bbox_list
 
 ######### ** Create Grid
+area_grid(DATA_train, show=True)
 area_grid(DATA_train)
 
 ################
@@ -434,6 +436,20 @@ def taskList_to_nodeList(taskList):
         node_previous = node_current
     return nodes
 
+def stack_timeless_features(*features):
+    "Merge multiple DATA_TIMELESS features into a time-series DATA feature"
+    print(f"Merging {len(features)} features")
+
+    for i, feat in enumerate(features):
+        print(f"feature: {i}")
+        print(f"  Shape: {feat.shape}")
+        print(f"  Dtype: {feat.dtype}")
+
+    stacked= np.stack(features, axis=0)
+    print(f"Stacked shape: {stacked.shape}")
+    return stacked
+
+
 def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
     """
     Creates a workflow to import tiffs individually, concatenate sets on the time axis, and delete the individuals.
@@ -470,8 +486,8 @@ def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
                 m = m + 1
             # concatenate all single layers to a set
             set_data_feature = (FeatureType.DATA, name_set)
-            # zip_function: concat along time to 3d (t*h*w), expand dims to 4d (t*h*w*c) where c is 1
-            merge_task = MergeFeatureTask(single_list, set_data_feature, zip_function=lambda *f: np.expand_dims(np.concatenate(f, axis=0), axis=-1))
+            # zip_function:  expand dims to 4d (1t*h*w*1c), then concat along time to 3d (t*h*w*1c)
+            merge_task = MergeFeatureTask(single_list, set_data_feature, zip_function=stack_timeless_features)
             tasklist.append(merge_task)
             # delete task
             remove_task = RemoveFeatureTask(single_list)
@@ -491,21 +507,57 @@ def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
         execution_args.append(args_dict)
     return workflow, execution_args
 
-def load_train_eopatches():
-    # Execute the workflow
+'''
 
+I had intended to create this shape
+(10, 500, 500, 1)
+
+zip_function=lambda *f: np.expand_dims(np.concatenate(f, axis=0), axis=-1)
+this function lead to the following dims
+0000_index_nir_sigma_0-0: numpy.ndarray(shape=(5000, 500, 1, 1), dtype=float32)
+
+
+zip_function = lambda *arr: np.concatenate([r[np.newaxis, ..., np.newaxis] for r in arr], axis=0)
+led to 5D
+
+zip_function = lambda *arr: np.stack(arr, axis=0)[..., np.newaxis]
+has 5D
+
+zip_function=lambda *f: np.expand_dims(np.concatenate(np.expand_dims(f, axis=0), axis=0), axis=-1)
+has 5D
+
+zip_function = lambda *arr: np.expand_dims(np.stack(arr, axis=0), axis=-1)
+has 5D
+
+zip_function=lambda *f: np.concatenate(np.expand_dims(f, axis=0), axis=0)
+did not complete
+
+trying
+stack_timeless_features()
+(10*500*500*1)
+&&&
+'''
+
+def load_train_eopatches():
+    # create workflow
     wf, args = CreateLoaderWorkflow(indicators=unique_tif_indicators(),
                                     areas=area_grid(DATA_train),
                                     eopatch_dir=EOPATCH_DIR )
+    print("created workflow")
+    # Execute the workflow
     executor = EOExecutor(wf, args, save_logs=True)
+    print("created executor")
     executor.run(workers=1) # workers must be 1 to avoid pickling error
     executor.make_report()
+
     failed_ids = executor.get_failed_executions()
     if failed_ids:
         raise RuntimeError(
             f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
             f"For more info check report at {executor.get_report_path()}"
         )
+
+# load_train_eopatches()
 
 ######### ** Load timestamps etc
 # &&& timestamps task
@@ -563,9 +615,6 @@ Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
       dtype='object')
 '''
 # &&& initialize nodes
-load_task = MultiLoader(dates=unique_tif_indicators()['dates'],
-                              indices=unique_tif_indicators()['indices'],
-                              sigmas=unique_tif_indicators()['sigmas'])
 
 vector_import_task = VectorImportTask(vector_feature, bind_observations())
 
@@ -610,7 +659,7 @@ data_keys
 
 #####
 # *** RGB per time
-eopatch.plot((FeatureType.DATA, data_keys[9]))
+eopatch.plot((FeatureType.DATA, data_keys[3]))
 #&&& make vis on load to check
 #####
 # *** Reference identities map

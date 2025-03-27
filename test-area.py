@@ -135,7 +135,8 @@ DATA_table = os.path.join(DATA_TABLE, "field-data.csv")
 
 # intermediate and output data
 DATA_OP_ROOT = os.path.join(DATA_ROOT, "..", "model_output")
-EOPATCH_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
+EOPATCH_TRAIN_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
+EOPATCH_VALIDATE_DIR= os.path.join(DATA_OP_ROOT, "eopatches_validation")
 DATA_DIR= os.path.join(DATA_OP_ROOT, "data")
 EOPATCH_SAMPLES_DIR= os.path.join(DATA_OP_ROOT, "eopatches_sampled")
 RESULTS_DIR= os.path.join(DATA_OP_ROOT, "results")
@@ -507,38 +508,7 @@ def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
         execution_args.append(args_dict)
     return workflow, execution_args
 
-'''
-
-I had intended to create this shape
-(10, 500, 500, 1)
-
-zip_function=lambda *f: np.expand_dims(np.concatenate(f, axis=0), axis=-1)
-this function lead to the following dims
-0000_index_nir_sigma_0-0: numpy.ndarray(shape=(5000, 500, 1, 1), dtype=float32)
-
-
-zip_function = lambda *arr: np.concatenate([r[np.newaxis, ..., np.newaxis] for r in arr], axis=0)
-led to 5D
-
-zip_function = lambda *arr: np.stack(arr, axis=0)[..., np.newaxis]
-has 5D
-
-zip_function=lambda *f: np.expand_dims(np.concatenate(np.expand_dims(f, axis=0), axis=0), axis=-1)
-has 5D
-
-zip_function = lambda *arr: np.expand_dims(np.stack(arr, axis=0), axis=-1)
-has 5D
-
-zip_function=lambda *f: np.concatenate(np.expand_dims(f, axis=0), axis=0)
-did not complete
-
-trying
-stack_timeless_features()
-(10*500*500*1)
-&&&
-'''
-
-def load_train_eopatches():
+def load_training_eopatches():
     # create workflow
     wf, args = CreateLoaderWorkflow(indicators=unique_tif_indicators(),
                                     areas=area_grid(DATA_train),
@@ -557,21 +527,70 @@ def load_train_eopatches():
             f"For more info check report at {executor.get_report_path()}"
         )
 
-# load_train_eopatches()
+# load_training_eopatches()
+
+# &&& make separate eopatch dirs for train and validate loads
 
 ######### ** Load timestamps etc
-# &&& timestamps task
+class AddTimestamps(EOTask):
+    "Adds timestamps to an eopatch. uses the function unique_tif_indicators to identify times"
+    def __init__(self, unique_tif_indicators=unique_tif_indicators()):
+        self.indicators = unique_tif_indicators
+        self.dates = self.indicators['dates']
     def _toDatetime(self, stringlist):
         fmt = '%Y-%m-%d'
         return [datetime.datetime.strptime(s, fmt) for s in stringlist]
-    eopatch.timestamps = self._toDatetime(self.dates)
-# &&& valid mask task
+    def execute(self, eopatch):
+        eopatch.timestamps = self._toDatetime(self.dates)
+        return eopatch
+
+class MakeAreaMask(EOTask):
+    "Uses polygon to make a valid area mask. Arg: path to geopackage containing geometry"
+    def __init__(self, gpkg_path):
+        self.gpkg_path = gpkg_path
+        self.polygon = self._load_polygon()
+    def _load_polygon(self):
+        gdf = gpd.read_file(self.gpkg_path)
+        return gdf.geometry.unary_union
+    def _get_dimensions(self, eopatch):
+        for feature_type, feature_name in eopatch.get_features():
+            if feature_type == eopatch.FeatureType.DATA:
+                height, width = eopatch.get_spatial_dimension(feature_type, feature_name)
+                break
+        else:
+            raise ValueError("No DATA feature found to infer spatial dimensions")
+        return height, width
+    def _get_transform(self, eopatch, height, width):
+        bbox = eopatch.bbox
+        tnsf = rasterio.transform.from_bounds(
+            west=bbox[0],
+            south=bbox[1],
+            east=bbox[2],
+            north=bbox[3],
+            width=width,
+            height=height
+        )
+        return tnsf
+    def _get_mask(self, transform, height, width):
+        mask = rasterio.features.geometry_mask(
+            [self.polygon],
+            out_shape =(height, width),
+            transform = transform,
+            invert = True # Pixel is inside geometry
+        )
+        return mask
+    def execute(self, eopatch):
+        height, width = self._get_dimensions(eopatch)
+        transform = self._get_transform(eopatch, height, width)
+        mask = self._get_mask(transform, height, width)
+        eopatch[FeatureType.MASK_TIMELESS, 'IN_POLYGON'] = mask.astype(bool)
+        return eopatch
 
 ######### ** Load reference polygons
 #####
 # *** Bind identities and observations
 
-def bind_observations(polygons=DATA_ids, observations=DATA_table ):
+def bind_observations(polygons=DATA_ids, observations=DATA_table, dir=DATA_DIR):
     "Append table of observation data to polygons, ensure common column, then row bind on samples. Returns: fiona readable object"
     gdf = gpd.read_file(polygons)
     df = pd.read_csv(observations)
@@ -581,20 +600,30 @@ def bind_observations(polygons=DATA_ids, observations=DATA_table ):
     df.rename(columns={'SAMPLE': 'sample'}, inplace=True)
     # merge
     merged_gdf = gdf.merge(df, on='sample', how='left')
-    merged_gdf.columns
-    # re code for fiona intake
-    geojson = merged_gdf.to_json()
-    byte_encoded = BytesCollection(geojson.encode('utf-8'))
-    return byte_encoded
-
+    # write to disk
+    path = os.path.join(dir, 'bound_observations.geojson')
+    merged_gdf.to_file(path, driver='GeoJSON')
+    return path
 
 #####
 # *** Import vectors
 vector_feature = FeatureType.VECTOR_TIMELESS, "IDENTITIES"
-
+vector_import_task = VectorImportTask(vector_feature, bind_observations())
 
 #####
-# *** Rasterize observations &&&
+# *** Rasterize observations
+'''
+merged_gdf.columns for values_column
+
+Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
+       'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
+       'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED',
+       'SBLOTCH-LMH'],
+      dtype='object')
+
+which are valid for test area &&&
+'''
+
 rasterize_height_task = VectorToRasterTask(
     vector_feature, # match that used in vector import task
     (FeatureType.MASK_TIMELESS, "HEIGHT"), #name new layer &&&
@@ -603,33 +632,26 @@ rasterize_height_task = VectorToRasterTask(
     raster_dtype=np.uint8,
 )
 
+# initialize tasks or copy
+load_task = LoadTask(EOPATCH_TRAIN_DIR)
+add_timestamps_task = AddTimestamps()
+make_areamask_task = MakeAreaMask(DATA_train)
+vector_task = vector_import_task
+rasterize_task = rasterize_height_task
+save_task = SaveTask(EOPATCH_TRAIN_DIR, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
-'''
-merged_gdf.columns
-valid for test df &&&
+# node list
+workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task, make_areamask_task, vector_task, rasterize_task, save_task)
 
-Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
-       'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
-       'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED',
-       'SBLOTCH-LMH'],
-      dtype='object')
-'''
-# &&& initialize nodes
-
-vector_import_task = VectorImportTask(vector_feature, bind_observations())
-
-save_task = SaveTask(EOPATCH_DIR, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
-# &&& node list
-
-workflow_nodes = linearly_connect_tasks(load_task, save_task)
-# &&& workflow
+# workflow
 workflow = EOWorkflow(workflow_nodes)
+
 # &&& additional arguments
 execution_args = []
 for idx, bbox in enumerate(area_grid(DATA_train)):
     execution_args.append(
         {
-            workflow_nodes[0]: {"bbox": bbox}, # load task is first
+            workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
             workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"}, # save task is last
         }
     )
@@ -637,8 +659,6 @@ for idx, bbox in enumerate(area_grid(DATA_train)):
 # Execute the workflow
 executor = EOExecutor(workflow, execution_args, save_logs=True)
 executor.run(workers=4)
-
-
 
 failed_ids = executor.get_failed_executions()
 if failed_ids:
@@ -749,6 +769,7 @@ eopatch.plot((FeatureType.DATA, data_keys[3]))
 ############################################
 
 class MultiLoader(EOTask):
+    "Not used but kept because it was working although the shape was wrong"
     def __init__(self, dates, indices, sigmas):
         self.dates = dates
         self.indices = indices

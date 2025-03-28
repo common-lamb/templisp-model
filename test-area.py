@@ -100,7 +100,7 @@ import rasterio
 import geopandas as gpd
 from sentinelhub import DataCollection, UtmZoneSplitter
 
-from eolearn.core.core_tasks import CreateEOPatchTask, RemoveFeatureTask
+from eolearn.core.core_tasks import CreateEOPatchTask, InitializeFeatureTask, RemoveFeatureTask
 from eolearn.core import (EOExecutor,
                           EOPatch,
                           EOTask,
@@ -135,7 +135,7 @@ DATA_table = os.path.join(DATA_TABLE, "field-data.csv")
 
 # intermediate and output data
 DATA_OP_ROOT = os.path.join(DATA_ROOT, "..", "model_output")
-EOPATCH_TRAIN_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
+EOPATCH_TRAIN_DIR= os.path.join(DATA_OP_ROOT, "eopatches_train")
 EOPATCH_VALIDATE_DIR= os.path.join(DATA_OP_ROOT, "eopatches_validation")
 DATA_DIR= os.path.join(DATA_OP_ROOT, "data")
 EOPATCH_SAMPLES_DIR= os.path.join(DATA_OP_ROOT, "eopatches_sampled")
@@ -161,11 +161,11 @@ def dir_file_enforce():
         if not os.path.exists(f):
             raise FileNotFoundError(f"Input file not found: {f}")
     # make exist
-    for d in (DATA_OP_ROOT, EOPATCH_DIR, DATA_DIR, EOPATCH_SAMPLES_DIR, RESULTS_DIR):
+    for d in (DATA_OP_ROOT, EOPATCH_TRAIN_DIR, EOPATCH_VALIDATE_DIR, DATA_DIR, EOPATCH_SAMPLES_DIR, RESULTS_DIR):
         os.makedirs(d, exist_ok=True)
 
 def parse_identifiers(path):
-    "aaa&&&"
+    "extract date index and sigma from a path"
     date_pat = re.compile(r'date_(.+?)_index')
     index_pat = re.compile(r'index_(.+?)_sigma')
     sigma_pat = re.compile(r'sigma-(.+?)\.tif')
@@ -197,7 +197,6 @@ def parse_identifiers(path):
     return {'date':date_found,
             'index':index_found,
             'sigma':sigma_found}
-
 
 def input_tifs():
     tifs = glob.glob(os.path.join(DATA_RASTERS, "*.tif"))
@@ -337,7 +336,6 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
 
 ######### ** Create Grid
 area_grid(DATA_train, show=True)
-area_grid(DATA_train)
 
 ################
 # * Load EOpatch
@@ -450,8 +448,7 @@ def stack_timeless_features(*features):
     print(f"Stacked shape: {stacked.shape}")
     return stacked
 
-
-def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
+def CreateStackLoaderWorkflow(indicators, areas, eopatch_dir):
     """
     Creates a workflow to import tiffs individually, concatenate sets on the time axis, and delete the individuals.
     Args:
@@ -508,15 +505,11 @@ def CreateLoaderWorkflow(indicators, areas, eopatch_dir):
         execution_args.append(args_dict)
     return workflow, execution_args
 
-def load_training_eopatches():
+def execute_prepared_workflow(workflow_and_args):
     # create workflow
-    wf, args = CreateLoaderWorkflow(indicators=unique_tif_indicators(),
-                                    areas=area_grid(DATA_train),
-                                    eopatch_dir=EOPATCH_DIR )
-    print("created workflow")
+    wf, args = workflow_and_args
     # Execute the workflow
     executor = EOExecutor(wf, args, save_logs=True)
-    print("created executor")
     executor.run(workers=1) # workers must be 1 to avoid pickling error
     executor.make_report()
 
@@ -527,11 +520,11 @@ def load_training_eopatches():
             f"For more info check report at {executor.get_report_path()}"
         )
 
-# load_training_eopatches()
-
-# &&& make separate eopatch dirs for train and validate loads
+# TIME INTENSIVE JOB load all geotiffs into training eopatches stacked
+# execute_prepared_workflow(CreateStackLoaderWorkflow(indicators=unique_tif_indicators(), areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR ))
 
 ######### ** Load timestamps etc
+
 class AddTimestamps(EOTask):
     "Adds timestamps to an eopatch. uses the function unique_tif_indicators to identify times"
     def __init__(self, unique_tif_indicators=unique_tif_indicators()):
@@ -548,13 +541,12 @@ class MakeAreaMask(EOTask):
     "Uses polygon to make a valid area mask. Arg: path to geopackage containing geometry"
     def __init__(self, gpkg_path):
         self.gpkg_path = gpkg_path
-        self.polygon = self._load_polygon()
     def _load_polygon(self):
         gdf = gpd.read_file(self.gpkg_path)
-        return gdf.geometry.unary_union
+        return gdf.geometry.union_all()
     def _get_dimensions(self, eopatch):
         for feature_type, feature_name in eopatch.get_features():
-            if feature_type == eopatch.FeatureType.DATA:
+            if feature_type == FeatureType.DATA:
                 height, width = eopatch.get_spatial_dimension(feature_type, feature_name)
                 break
         else:
@@ -563,17 +555,17 @@ class MakeAreaMask(EOTask):
     def _get_transform(self, eopatch, height, width):
         bbox = eopatch.bbox
         tnsf = rasterio.transform.from_bounds(
-            west=bbox[0],
-            south=bbox[1],
-            east=bbox[2],
-            north=bbox[3],
+            west=bbox.min_x,
+            south=bbox.min_y,
+            east=bbox.max_x,
+            north=bbox.max_y,
             width=width,
             height=height
         )
         return tnsf
-    def _get_mask(self, transform, height, width):
+    def _get_mask(self, polygon, transform, height, width):
         mask = rasterio.features.geometry_mask(
-            [self.polygon],
+            [polygon],
             out_shape =(height, width),
             transform = transform,
             invert = True # Pixel is inside geometry
@@ -582,96 +574,121 @@ class MakeAreaMask(EOTask):
     def execute(self, eopatch):
         height, width = self._get_dimensions(eopatch)
         transform = self._get_transform(eopatch, height, width)
-        mask = self._get_mask(transform, height, width)
-        eopatch[FeatureType.MASK_TIMELESS, 'IN_POLYGON'] = mask.astype(bool)
+        polygon = self._load_polygon()
+        mask = self._get_mask(polygon, transform, height, width) # shape (n*m)
+        mask3d = mask[..., np.newaxis] # add d for (n*m*d)
+        # if FeatureType.MASK_TIMELESS not in eopatch:
+        #     eopatch[FeatureType.MASK_TIMELESS] = {}
+        eopatch[FeatureType.MASK_TIMELESS, "IN_POLYGON"] = mask3d.astype(bool)
+        print(eopatch)
         return eopatch
 
 ######### ** Load reference polygons
 #####
 # *** Bind identities and observations
 
-def bind_observations(polygons=DATA_ids, observations=DATA_table, dir=DATA_DIR):
+def bind_observations(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR):
     "Append table of observation data to polygons, ensure common column, then row bind on samples. Returns: fiona readable object"
     gdf = gpd.read_file(polygons)
     df = pd.read_csv(observations)
-    # ensure commmon attribute
-    # gdf.columns
-    # df.columns
-    df.rename(columns={'SAMPLE': 'sample'}, inplace=True)
+    # ensure correct attributes
+    target_shared = 'sample'
+    change_from = 'SAMPLE'
+    cols_gdf = gdf.columns
+    # must have target_shared
+    if not target_shared in cols_gdf:
+        raise ValueError(f"Expected column not found in {cols_gdf} Expected: {target_shared}")
+    cols_df = df.columns
+    # must have change_from
+    if not change_from in cols_df:
+        raise ValueError(f"Expected column not found in {cols_df} Expected: {change_from}")
+    # make rename for merge
+    df.rename(columns={change_from: target_shared}, inplace=True)
     # merge
-    merged_gdf = gdf.merge(df, on='sample', how='left')
+    merged_gdf = gdf.merge(df, on=target_shared, how='left')
+    # merged_gdf.columns
     # write to disk
-    path = os.path.join(dir, 'bound_observations.geojson')
-    merged_gdf.to_file(path, driver='GeoJSON')
-    return path
+    path = os.path.join(ddir, 'bound_observations.gpkg')
+    abs_path = os.path.abspath(path)
+    merged_gdf.to_file(abs_path, driver='GPKG', layer='identities')
+    return abs_path
 
-#####
-# *** Import vectors
-vector_feature = FeatureType.VECTOR_TIMELESS, "IDENTITIES"
-vector_import_task = VectorImportTask(vector_feature, bind_observations())
+def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
+    """
+    Creates a workflow to add dates, masks, rasterized observation data to eopatches.
+    Args:
+    areas=area_grid(DATA_train) or area_grid(DATA_test), grid determines patch count and size
+    observations=bind_observations(), a path to a fiona readable object with identity geometries and observation data per identity
+    eopatch_dir path to the loaded tif stack eopatches which this workflow will augment
+    Rets:
+    workflow
+    execution_args for workflow
+    """
 
-#####
-# *** Rasterize observations
-'''
-merged_gdf.columns for values_column
+    #####
+    # *** Import vectors
+    vector_feature = FeatureType.VECTOR_TIMELESS, "IDENTITIES"
+    vector_import_task = VectorImportTask(vector_feature, observations)
 
-Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
-       'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
-       'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED',
-       'SBLOTCH-LMH'],
-      dtype='object')
+    #####
+    # *** Rasterize observations
+    '''
+    merged_gdf.columns for selection by values_column
 
-which are valid for test area &&&
-'''
+    Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
+           'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
+           'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED',
+           'SBLOTCH-LMH'],
+          dtype='object')
 
-rasterize_height_task = VectorToRasterTask(
-    vector_feature, # match that used in vector import task
-    (FeatureType.MASK_TIMELESS, "HEIGHT"), #name new layer &&&
-    values_column="HEIGHT-CM", # col of merged_gdf.columns to rasterize
-    raster_shape=(FeatureType.MASK, "IN_POLYGON"),
-    raster_dtype=np.uint8,
-)
+    which are valid for test area &&&
+    '''
 
-# initialize tasks or copy
-load_task = LoadTask(EOPATCH_TRAIN_DIR)
-add_timestamps_task = AddTimestamps()
-make_areamask_task = MakeAreaMask(DATA_train)
-vector_task = vector_import_task
-rasterize_task = rasterize_height_task
-save_task = SaveTask(EOPATCH_TRAIN_DIR, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
-
-# node list
-workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task, make_areamask_task, vector_task, rasterize_task, save_task)
-
-# workflow
-workflow = EOWorkflow(workflow_nodes)
-
-# &&& additional arguments
-execution_args = []
-for idx, bbox in enumerate(area_grid(DATA_train)):
-    execution_args.append(
-        {
-            workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
-            workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"}, # save task is last
-        }
+    rasterize_height_task = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "HEIGHT"), #name of rasterized new layer, DATA floats
+        values_column="HEIGHT-CM", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # &&& float
     )
 
-# Execute the workflow
-executor = EOExecutor(workflow, execution_args, save_logs=True)
-executor.run(workers=4)
+    # initialize tasks or copy
+    load_task = LoadTask(eopatch_dir)
+    clean_task = RemoveFeatureTask(features=[(FeatureType.DATA_TIMELESS, 'HEIGHT')])
+    add_timestamps_task = AddTimestamps()
+    make_areamask_task = MakeAreaMask(DATA_train)
+    vector_task = vector_import_task
+    rasterize_task = rasterize_height_task
+    save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
+    # node list
+    #workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task, make_areamask_task, vector_task, rasterize_task, save_task)
 
-failed_ids = executor.get_failed_executions()
-if failed_ids:
-    raise RuntimeError(
-        f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
-        f"For more info check report at {executor.get_report_path()}"
-    )
+    workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task)
+
+    # workflow
+    workflow = EOWorkflow(workflow_nodes)
+    # additional arguments
+    execution_args = []
+    for idx, bbox in enumerate(areas):
+        execution_args.append(
+            {
+                workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
+                workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"} # save task is last
+            }
+        )
+
+    return workflow, execution_args
+
+# wf,args =  CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train), observations=bind_observations(), eopatch_dir=EOPATCH_TRAIN_DIR)
+
+# load masks and timestamps to the patches after the gtiff stacks
+# execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train), observations=bind_observations(), eopatch_dir=EOPATCH_TRAIN_DIR))
 
 ######### ** Visualize layers
 #####
 # *** Object contents
-# EOPATCH_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
-eopatch = EOPatch.load(os.path.join(EOPATCH_DIR, 'eopatch_0'))
+# EOPATCH_TRAIN_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
+eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_2'))
 eopatch
 eopatch.timestamps
 data_keys = sorted(list(eopatch.data.keys()))
@@ -683,7 +700,8 @@ eopatch.plot((FeatureType.DATA, data_keys[3]))
 #&&& make vis on load to check
 #####
 # *** Reference identities map
-#####
+eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT'))
 # *** Rasterized observations
 ################
 # * Prepare eopatch

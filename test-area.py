@@ -79,6 +79,10 @@ import os
 import pathlib
 import glob
 import re
+
+import shapely.geometry
+import shapely.validation
+from copy import deepcopy
 from osgeo import gdal
 from fiona.collection import BytesCollection
 from collections import defaultdict
@@ -587,9 +591,56 @@ class MakeAreaMask(EOTask):
 #####
 # *** Bind identities and observations
 
+def report_repair_invalid_geometry(invalid_index, gdf):
+    invalid_geom = gdf.loc[invalid_index, 'geometry']
+    print("Invalid geometry",invalid_geom)
+    explanation = shapely.validation.explain_validity(invalid_geom)
+    print("Invalid explanation", explanation)
+    repaired_geom = shapely.validation.make_valid(invalid_geom)
+    print("Repaired geometry", repaired_geom)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    ax1.set_title("Original Geometry")
+    ax2.set_title("Repaired Geometry")
+    if hasattr(invalid_geom, 'exterior'):
+        ax1.plot(*invalid_geom.exterior.xy)
+    else:
+        ax1.plot(invalid_geom.xy)
+    if isinstance(repaired_geom, shapely.geometry.GeometryCollection):
+        for geom in repaired_geom.geoms:
+            if hasattr(geom, 'exterior'):
+                ax2.plot(*geom.exterior.xy)
+            else:
+                ax2.plot(*geom.xy)
+    elif hasattr(repaired_geom, 'exterior'):
+        ax2.plot(*repaired_geom.exterior.xy)
+    else:
+        ax2.plot(*repaired_geom.xy)
+    ax1.axis('equal')
+    ax2.axis('equal')
+    plt.show()
+
+    return repaired_geom
+
+def check_valid_geometry(gdf):
+    gdf['is_valid'] = gdf.geometry.is_valid
+    invalid_geoms = gdf[~gdf['is_valid']]
+
+    print(f"Total geometries: {len(gdf)}")
+    print(f"Valid geometries: {gdf['is_valid'].sum}")
+    print(f"Invalid geometries: {len(invalid_geoms)}")
+    print(f"Invalid indices: {invalid_geoms.index.tolist()}")
+
+    repaired_gdf = deepcopy(gdf)
+    for idx in invalid_geoms.index:
+        repaired_gdf.loc[idx, 'geometry'] = report_repair_invalid_geometry(idx, gdf)
+
+    return repaired_gdf
+
 def bind_observations(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR):
     "Append table of observation data to polygons, ensure common column, then row bind on samples. Returns: fiona readable object"
     gdf = gpd.read_file(polygons)
+    gdf = check_valid_geometry(gdf)
     df = pd.read_csv(observations)
     # ensure correct attributes
     target_shared = 'sample'
@@ -610,7 +661,7 @@ def bind_observations(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR)
     # write to disk
     path = os.path.join(ddir, 'bound_observations.gpkg')
     abs_path = os.path.abspath(path)
-    merged_gdf.to_file(abs_path, driver='GPKG', layer='identities')
+    merged_gdf.to_file(abs_path, driver='GPKG', layer='name')
     return abs_path
 
 def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
@@ -663,7 +714,7 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
     # node list
     #workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task, make_areamask_task, vector_task, rasterize_task, save_task)
 
-    workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task)
+    workflow_nodes = linearly_connect_tasks(load_task, vector_task, save_task)
 
     # workflow
     workflow = EOWorkflow(workflow_nodes)
@@ -683,6 +734,213 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
 
 # load masks and timestamps to the patches after the gtiff stacks
 # execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train), observations=bind_observations(), eopatch_dir=EOPATCH_TRAIN_DIR))
+
+
+
+
+#&&& simplified version for testing error
+
+def bind_observations_temp(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR):
+    "Minimal case, only geometries and single int attribute"
+    gdf = gpd.read_file(polygons)
+    validated_gdf = check_valid_geometry(gdf) #&&& add to official
+    # write to disk
+    path = os.path.join(ddir, 'temp_observations.gpkg')
+    abs_path = os.path.abspath(path)
+    validated_gdf.to_file(abs_path, driver='GPKG', layer='identities') #&&&
+    return abs_path
+
+# bind_observations_temp()
+# '/bulk-2/model_output/data/temp_observations.gpkg'
+# test = gpd.read_file('/bulk-2/model_output/data/temp_observations.gpkg')
+# test.crs
+# test.columns
+
+vector_feature = (FeatureType.VECTOR_TIMELESS, "IDENTITIES")
+
+# init tasks
+load_task = LoadTask(EOPATCH_TRAIN_DIR)
+vector_task = VectorImportTask(vector_feature, bind_observations_temp())
+rasterize_height_task = VectorToRasterTask(
+    vector_feature, # as used in vector import task
+    (FeatureType.DATA_TIMELESS, "HEIGHT"), #name of rasterized new layer, DATA for float values
+    values_column="HEIGHT-CM", # select col from merged_gdf.columns to rasterize
+    raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+    raster_dtype=np.float32, # float
+)
+# this target dir is made empty before each test
+save_task = SaveTask('/home/user/temp', overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
+
+# node list
+# success
+# workflow_nodes = linearly_connect_tasks(load_task, <other data loading tasks have been successfully saved>, save_task)
+# success
+# workflow_nodes = linearly_connect_tasks(load_task, vector_task)
+# fail
+workflow_nodes = linearly_connect_tasks(load_task, vector_task, save_task)
+'''
+test 2
+manually place a copy of observations, as if vector_task had succeded to test rasterize height task
+
+ cd /bulk-2/model_output/eopatch_0/vector_timeless/
+ cp /bulk-2/model_output/data/IDENTITIES.gpkg .
+ cd ../../eopatch_1/vector_timeless/
+ cp /bulk-2/model_output/data/IDENTITIES.gpkg .
+ cd ../../eopatch_2/vector_timeless/
+ cp /bulk-2/model_output/data/IDENTITIES.gpkg .
+ cd ../../eopatch_3/vector_timeless/
+ cp /bulk-2/model_output/data/IDENTITIES.gpkg .
+
+'''
+# success
+# workflow_nodes = linearly_connect_tasks(load_task, rasterize_height_task)
+# fail
+# workflow_nodes = linearly_connect_tasks(load_task, rasterize_height_task, save_task)
+
+# workflow
+workflow = EOWorkflow(workflow_nodes)
+
+# additional arguments
+execution_args = []
+for idx, bbox in enumerate(area_grid(DATA_train)): # area_grid partitions the polygon and returns bbox list
+    execution_args.append(
+        {
+            workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
+            workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"} # save task is last
+        }
+    )
+
+# Execute the workflow
+executor = EOExecutor(workflow, execution_args, save_logs=True)
+executor.run(workers=1)
+executor.make_report()
+
+failed_ids = executor.get_failed_executions()
+if failed_ids:
+    raise RuntimeError(
+        f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
+        f"For more info check report at {executor.get_report_path()}"
+    )
+
+'''
+
+In both cases, the combination of a (vector import task or rasterize task) followed by the save task causes this pyogiro-sqlite error
+
+
+>> error
+2025-03-29 16:09:02,118 eolearn.core.eoworkflow ERROR    Task 'SaveTask' with id SaveTask-06f7db1f0ce211f09159-6bd05c84396c failed with stack trace:
+Traceback (most recent call last):
+  File "pyogrio/_io.pyx", line 1603, in pyogrio._io.ogr_create
+  File "pyogrio/_err.pyx", line 179, in pyogrio._err.exc_wrap_pointer
+pyogrio._err.CPLE_OpenFailedError: sqlite3_open(<gzip _io.BufferedWriter name=b'/home/user/temp/tmpcowhph8o__tempfs__/tmp_feature' 0x7213b77aaa10>) failed: unable to open database file
+pyogrio OpenFailedError: sqlite3_open failed: unable to open database file
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eoworkflow.py", line 271, in _execute_task
+    return task.execute(*task_args, **task_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/core_tasks.py", line 162, in execute
+    eopatch.save(
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eodata.py", line 644, in save
+    save_eopatch(
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eodata_io.py", line 162, in save_eopatch
+    new_files = list(executor.map(lambda saver: saver(), data_for_saving))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/concurrent/futures/_base.py", line 619, in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/concurrent/futures/_base.py", line 317, in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/home/user/.conda/envs/model/lib/python3.11/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eodata_io.py", line 162, in <lambda>
+    new_files = list(executor.map(lambda saver: saver(), data_for_saving))
+                                                ^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eodata_io.py", line 607, in save
+    cls._save(data, tempfs, "tmp_feature", compress_level)
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eodata_io.py", line 623, in _save
+    cls._write_to_file(data, gzip_file, path)
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/core/eodata_io.py", line 676, in _write_to_file
+    return data.to_file(file, driver="GPKG", encoding="utf-8", layer=layer, index=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/geopandas/geodataframe.py", line 1536, in to_file
+    _to_file(self, filename, driver, schema, index, **kwargs)
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/geopandas/io/file.py", line 686, in _to_file
+    _to_file_pyogrio(df, filename, driver, schema, crs, mode, metadata, **kwargs)
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/geopandas/io/file.py", line 748, in _to_file_pyogrio
+    pyogrio.write_dataframe(df, filename, driver=driver, metadata=metadata, **kwargs)
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/pyogrio/geopandas.py", line 548, in write_dataframe
+    write(
+  File "/home/user/.conda/envs/model/lib/python3.11/site-packages/pyogrio/raw.py", line 530, in write
+    ogr_write(
+  File "pyogrio/_io.pyx", line 1799, in pyogrio._io.ogr_write
+  File "pyogrio/_io.pyx", line 1612, in pyogrio._io.ogr_create
+pyogrio.errors.DataSourceError: sqlite3_open(<gzip _io.BufferedWriter name=b'/home/user/temp/tmpcowhph8o__tempfs__/tmp_feature' 0x7213b77aaa10>) failed: unable to open database file
+<< end error
+
+Just doing the task without save seems to succeed, the log file shows the expected columns of IDENTITIES after import, or the created HEIGHT raster
+
+test 1
+  vector_timeless={
+    IDENTITIES: geopandas.GeoDataFrame(columns=['sample', 'NAME', 'HEIGHT-CM', 'ROW-TYPE', 'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA', 'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED', 'SBLOTCH-LMH', 'geometry'], length=1212, crs=EPSG:32614)
+  }
+
+test 2
+  data_timeless={
+    HEIGHT: numpy.ndarray(shape=(500, 500, 1), dtype=float32)
+  }
+
+But on save of either the error is thrown.
+checking the previously empty output dir I see that the eopatch_<n> has been created which includes a dir for the feature I am trying to create. this dir will be empty. Although it seems that permissions are not an issue
+
+The env has been installed with conda, and to my reading satisfies dependencies of pyogrio
+(model) conda list | grep pyogrio
+pyogrio                   0.7.2           py311hbac4ec9_0    conda-forge
+(model) conda list | grep gdal
+gdal                      3.7.2           py311h815a124_1    conda-forge
+libgdal                   3.7.2                h323ed7e_1    conda-forge
+(model) conda list | grep sqlite
+libsqlite                 3.49.1               hee588c1_2    conda-forge
+sqlite                    3.49.1               h9eae976_2    conda-forge
+(model) conda list | grep geopandas
+geopandas                 1.0.1              pyhd8ed1ab_3    conda-forge
+geopandas-base            1.0.1              pyha770c72_3    conda-forge
+(model) conda list | grep shapely
+shapely                   2.0.2           py311he06c224_0    conda-forge
+
+I have searched your repo for calls to pyogrio and found nothing.
+I have made a series of changes, in my system, moving to other disks, ensuring the program is being opened from the same disk etc.
+Searches for this error string show very few relevant hits.
+Is this something you have seen before? I am at my wits end. Your deeper experience in spatial data may suggest ways ahead to solve this.
+'''
+
+
+'''
+made permissions on input and output dirs 777 to preclude read write permissions blocking sqlite.
+got this new warning in the repl, execution reports remain the same.
+
+Warning 1: File /vsimem/c38884637f984cad8f1708e508ccf941 has GPKG application_id, but non conformant file extension
+/home/user/.conda/envs/model/lib/python3.11/site-packages/eolearn/geometry/transformations.py:178: EORuntimeWarning: Given vector polygons contain some invalid geometries, attempting to fix
+  warnings.warn("Given vector polygons contain some invalid geometries, attempting to fix", EORuntimeWarning)
+Warning 1: The filename extension should be 'gpkg' instead of '' to conform to the GPKG specification.
+ERROR 4: sqlite3_open(<gzip _io.BufferedWriter name=b'/home/user/temp/tmpnx44la8p__tempfs__/tmp_feature' 0x7eddacd4d7b0>) failed: unable to open database file
+
+
+
+
+
+'''
+
+# &&& installed versions
 
 ######### ** Visualize layers
 #####

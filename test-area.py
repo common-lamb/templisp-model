@@ -155,6 +155,8 @@ EXPECTED_N_TIFS = 630
 EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
 USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
+SAMPLE_RATE = 0.01 # percentage of eopatches sampled for training. in (0.0-1.0)
+
 ######### ** Input validation
 def dir_file_enforce():
     # check exists
@@ -340,7 +342,7 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
 
 ######### ** Create Grid
 # show grid that will be used later
-area_grid(DATA_train, show=True)
+test = area_grid(DATA_train, show=True)
 
 ################
 # * Load EOpatch
@@ -525,8 +527,15 @@ def execute_prepared_workflow(workflow_and_args):
             f"For more info check report at {executor.get_report_path()}"
         )
 
-# TIME INTENSIVE JOB load all geotiffs into training eopatches stacked
-# execute_prepared_workflow(CreateStackLoaderWorkflow(indicators=unique_tif_indicators(), areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR ))
+def ask_loadgeotiffs():
+    print("TIME INTENSIVE JOB load all geotiffs into training eopatches stacked")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        execute_prepared_workflow(CreateStackLoaderWorkflow(indicators=unique_tif_indicators(),
+                                                            areas=area_grid(DATA_train),
+                                                            eopatch_dir=EOPATCH_TRAIN_DIR ))
+
+ask_loadgeotiffs()
 
 ######### ** Load timestamps etc
 
@@ -738,16 +747,19 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
 
     return workflow, execution_args
 
-# wf,args =  CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train), observations=bind_observations(), eopatch_dir=EOPATCH_TRAIN_DIR)
-
-# load masks and timestamps to the patches after the gtiff stacks
-execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train), observations=bind_observations(), eopatch_dir=EOPATCH_TRAIN_DIR))
+def ask_loadDetails():
+    print("Load masks and timestamps to the patches after the gtiff stacks")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train),
+                                                          observations=bind_observations(),
+                                                          eopatch_dir=EOPATCH_TRAIN_DIR))
+ask_loadDetails()
 
 ######### ** Visualize layers
 #####
 # *** Object contents
-# EOPATCH_TRAIN_DIR= os.path.join(DATA_OP_ROOT, "eopatches")
-eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_2'))
+eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
 eopatch
 eopatch.timestamps
 data_keys = sorted(list(eopatch.data.keys()))
@@ -755,19 +767,73 @@ data_keys
 
 #####
 # *** RGB per time
-eopatch.plot((FeatureType.DATA, data_keys[3]))
+eopatch.plot((FeatureType.DATA, data_keys[-1]))
 #&&& make vis on load to check
+
 #####
 # *** Reference identities map
 eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
-eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT'))
+
 # *** Rasterized observations
+eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT'))
+
 ################
 # * Prepare eopatch
 ################
-######### ** Concatenate
-######### ** Erosion
-######### ** Sampling
+
+def CreatePatchPrepWorkflow(areas, eopatch_dir, eopatch_out_dir, trait, sample_rate=SAMPLE_RATE):
+    "Creates a workflow to finalize and sample eopatches. "
+
+    eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
+    data_keys = sorted(list(eopatch.data.keys()))
+
+    load_task = LoadTask(eopatch_dir)
+
+    ######### ** Concatenate
+    concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "TRAINING_FEATURES"))
+
+    ######### ** Erosion
+    erosion_task = ErosionTask(mask_feature=(FeatureType.DATA_TIMELESS, trait, f"{trait}_ERODED"), disk_radius=1) # &&& unsure if data_timeless is valid
+
+    ######### ** Sampling
+    sampling_task = FractionSamplingTask(features_to_sample=[(FeatureType.DATA, 'TRAINING_FEATURES', 'SAMPLED_FEATURES'),
+                                                             (FeatureType.DATA_TIMELESS, trait)],
+                                         sampling_feature=(FeatureType.MASK_TIMELESS, 'IN_POLYGON'),
+                                         fraction=sample_rate,
+                                         exclude_values=[0])
+
+    save_task = SaveTask(eopatch_out_dir, overwrite_permission=OverwritePermission.OVERWRITE_PATCH)
+
+    # node list
+    workflow_nodes = linearly_connect_tasks(load_task, concatenate_task, erosion_task, sampling_task, save_task)
+
+    # workflow
+    workflow = EOWorkflow(workflow_nodes)
+
+    # additional arguments
+    execution_args = []
+    for idx, bbox in enumerate(areas):
+        execution_args.append(
+            {
+                workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
+                workflow_nodes[-2]: {"seed": RNDM}, # sample task is second last
+                workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"} # save task is last
+            }
+        )
+
+    return workflow, execution_args
+
+def ask_preparePatches():
+    print("Finalize and sample EOPatches?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        execute_prepared_workflow(CreatePatchPrepWorkflow(areas=area_grid(DATA_train),
+                                                          eopatch_dir=EOPATCH_TRAIN_DIR,
+                                                          eopatch_out_dir=EOPATCH_SAMPLES_DIR,
+                                                          trait='HEIGHT'))
+
+ask_preparePatches()
+
 ################
 # * Create training data
 ################

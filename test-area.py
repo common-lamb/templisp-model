@@ -91,15 +91,13 @@ import itertools
 import joblib
 import pandas as pd
 from pandas._config import dates
-from tqdm.auto import tqdm
 import datetime
 import numpy as np
 from sklearn import metrics, preprocessing
 import matplotlib.pyplot as plt
-from matplotlib.colors import BoundaryNorm, ListedColormap
-from aenum import MultiValueEnum
 from shapely.geometry import Polygon
 import lightgbm as lgb
+from tsai.all import *
 import rasterio
 import geopandas as gpd
 from sentinelhub import DataCollection, UtmZoneSplitter
@@ -156,6 +154,7 @@ EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_
 USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
 SAMPLE_RATE = 0.01 # percentage of eopatches sampled for training. in (0.0-1.0)
+TEST_PERCENTAGE = 0.20 # perventage of test-train set to use for testing. in (0.0-1.0)
 
 ######### ** Input validation
 def dir_file_enforce():
@@ -790,14 +789,14 @@ def CreatePatchPrepWorkflow(areas, eopatch_dir, eopatch_out_dir, trait, sample_r
     load_task = LoadTask(eopatch_dir)
 
     ######### ** Concatenate
-    concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "TRAINING_FEATURES"))
+    concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "FEATURES_TRAINING"))
 
     ######### ** Erosion
-    erosion_task = ErosionTask(mask_feature=(FeatureType.DATA_TIMELESS, trait, f"{trait}_ERODED"), disk_radius=1) # &&& unsure if data_timeless is valid
+    erosion_task = ErosionTask(mask_feature=(FeatureType.DATA_TIMELESS, trait, f"{trait}_ERODED"), disk_radius=1)
 
     ######### ** Sampling
-    sampling_task = FractionSamplingTask(features_to_sample=[(FeatureType.DATA, 'TRAINING_FEATURES', 'SAMPLED_FEATURES'),
-                                                             (FeatureType.DATA_TIMELESS, trait)],
+    sampling_task = FractionSamplingTask(features_to_sample=[(FeatureType.DATA, 'FEATURES_TRAINING', 'FEATURES_SAMPLED'),
+                                                             (FeatureType.DATA_TIMELESS, f"{trait}_ERODED", f"{trait}_SAMPLED")],
                                          sampling_feature=(FeatureType.MASK_TIMELESS, 'IN_POLYGON'),
                                          fraction=sample_rate,
                                          exclude_values=[0])
@@ -837,23 +836,164 @@ ask_preparePatches()
 ################
 # * Create training data
 ################
-######### ** Extract eopatch
+
+######### ** Extract eopatches
+def sampledData(areas, eopatch_samples_dir, trait):
+    """
+    Takes grid of areas, a source of eopatches, and a single trait.
+    Concatenates all then Returns sampled_features and trait_eroded
+    """
+
+    sampled_eopatches = []
+    for i in range(len(areas)):
+        sample_path = os.path.join(eopatch_samples_dir, f"eopatch_{i}")
+        sampled_eopatches.append(EOPatch.load(sample_path, lazy_loading=True))
+
+    features = np.concatenate([eopatch.data["FEATURES_SAMPLED"] for eopatch in sampled_eopatches], axis=1)
+    labels = np.concatenate([eopatch.data_timeless[f"{trait}_SAMPLED"] for eopatch in sampled_eopatches], axis=0)
+
+    return features, labels
+
+f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = 'HEIGHT')
+f.shape # (10, 1686, 1, 45)
+l.shape #     (1686, 1, 1)
+
+test = f, l
 ######### ** Reshape data
-#####
-# *** Split patches into train test for GBM
-#####
-# *** Shape for GBM
-# from t,w,h,f to n, m
-# where n is pixels ie. w*h&&& and m is features x timesteps
-#####
-# *** Split samples into train test for TST &&&
-#####
+
 # *** Shape for TSP
-# from t,w,h,f to s,v,t
-# where s is w*h, v is features, t is time
+def reshape_eopatch_to_TSAI(data):
+    """
+    from eopatch as t,w,h,f
+    to
+    TSAI requires data as s,v,t
+    where s is w*h, v is features, t is time
+    """
+    features, labels = data
+
+    # t w h f 0123 -4-3-2-1
+    ft, fw, fh, ff = features.shape
+    lw, lh, lf = labels.shape
+    features_reshaped = np.moveaxis(features, 0, -1).reshape(fw * fh, ff, ft)
+    labels_reshaped = labels.reshape(lw * lh)
+
+    return features_reshaped, labels_reshaped
+
+fT, lT = reshape_eopatch_to_TSAI(data=test)
+fT.shape # (1686, 45, 10)
+lT.shape # (1686,)
+testT = fT, lT
+
+# *** Shape for GBM
+def reshape_to_GBM(data, TSAI_shape=True):
+    """
+    from eopatch as t,w,h,f
+    or from TSAI as s,v,t
+    to
+    GBM requires data as n, m
+    where n is pixels ie. s or w*h and m is features x timesteps
+    """
+    features, labels = data
+
+    if TSAI_shape:
+        # s v t 012 -3-2-1
+        fs, fv, ft = features.shape
+        features_reshaped = np.moveaxis(features, -1, -2).reshape(fs, ft * fv)
+        labels_reshaped = labels
+    else:
+        # direct from eolearn
+        # t w h f 0123 -4-3-2-1
+        ft, fw, fh, ff = features.shape
+        features_reshaped = np.moveaxis(features, 0, -2).reshape(fw * fh, ft * ff)
+        lw, lh, lf = labels.shape
+        labels_reshaped = labels.reshape(lw * lh)
+
+    return features_reshaped, labels_reshaped
+
+fG, lG = reshape_to_GBM(data=testT)
+fG.shape # (1686, 450)
+lG.shape # (1686,)
+
+#####
+# *** Split samples into train test sets
+#####
+
+def split_for_TSAI(data, test_percentage=TEST_PERCENTAGE):
+    "Takes eolearn  shaped features and labels, returns X,Y,splits shaped for TSAI"
+    features, labels = reshape_eopatch_to_TSAI(data)
+    # &&& make show false optional
+    splits = get_splits(labels, valid_size=test_percentage, stratify=True, random_state=RNDM, shuffle=True)
+    return features, labels, splits
+
+fS, lS, sS = split_for_TSAI(test)
+fS.shape # (1686, 45, 10)
+lS.shape # (1686,)
+len(sS[0]) # 1349
+len(sS[1]) # 337
+testS = fS, lS, sS
+
+
+
+def split_reconfigure_for_GBM(split_data):
+    "Takes TSAI shaped X,Y,splits, and returns x_train, y_train, x_test, y_test shaped for GBM"
+    features, labels, splits = split_data
+
+    split_train = splits[0]
+    mask_train = np.zeros(len(features), dtype=bool)
+    mask_train[split_train] = True
+    x_train = features[mask_train]
+    print(x_train.shape)
+    y_train = labels[mask_train]
+    print(y_train.shape)
+    data_train = x_train, y_train
+
+    split_test = splits[1]
+    mask_test = np.zeros(len(features), dtype=bool)
+    mask_test[split_test] = True
+    x_test =features[mask_test]
+    print(x_test.shape)
+    y_test =labels[mask_test]
+    print(y_test.shape)
+    data_test = x_test, y_test
+
+    x_train_GMB, y_train_GBM = reshape_to_GBM(data=data_train)
+    x_test_GBM, y_test_GBM = reshape_to_GBM(data=data_test)
+    return x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM
+
+x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM = split_reconfigure_for_GBM(testS)
+x_train_GMB.shape # (1349, 450)
+y_train_GBM.shape # (1349,)
+x_test_GBM.shape # (337, 450)
+y_test_GBM.shape # (337,)
+
 ################
 # * GBM experiment
 ################
+def create_GBM_training_data():
+    a = sampledData(areas=area_grid(DATA_train),
+                    eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
+                    trait = 'HEIGHT')
+    b = split_for_TSAI(a)
+    return split_reconfigure_for_GBM(b)
+
+x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data()
+x_train_GMB.shape # (1349, 450)
+y_train_GBM.shape # (1349,)
+x_test_GBM.shape # (337, 450)
+y_test_GBM.shape # (337,)
+
+def create_TSAI_training_data():
+    a = sampledData(areas=area_grid(DATA_train),
+                    eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
+                    trait = 'HEIGHT')
+    return split_for_TSAI(a)
+
+x_TSAI, y_TSAI, splits = create_TSAI_training_data()
+x_TSAI.shape # (1686, 45, 10)
+y_TSAI.shape # (1686,)
+len(splits[0]) # 1349
+len(splits[1]) # 337
+
 ######### ** Train
 ######### ** Validate
 #####

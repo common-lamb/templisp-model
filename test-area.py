@@ -815,7 +815,7 @@ def CreatePatchPrepWorkflow(areas, eopatch_dir, eopatch_out_dir, trait, sample_r
         execution_args.append(
             {
                 workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
-                workflow_nodes[-2]: {"seed": RNDM}, # sample task is second last
+                workflow_nodes[-2]: {"seed": RNDM}, # sample task
                 workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"} # save task is last
             }
         )
@@ -857,8 +857,8 @@ def sampledData(areas, eopatch_samples_dir, trait):
 f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = 'HEIGHT')
 f.shape # (10, 1686, 1, 45)
 l.shape #     (1686, 1, 1)
-
 test = f, l
+
 ######### ** Reshape data
 
 # *** Shape for TSP
@@ -887,11 +887,11 @@ testT = fT, lT
 # *** Shape for GBM
 def reshape_to_GBM(data, TSAI_shape=True):
     """
-    from eopatch as t,w,h,f
-    or from TSAI as s,v,t
+    from TSAI as s,v,t
+    or from eopatch as t,w,h,f
     to
     GBM requires data as n, m
-    where n is pixels ie. s or w*h and m is features x timesteps
+    where n is or w*h (ie. s) and m is t*f
     """
     features, labels = data
 
@@ -925,14 +925,12 @@ def split_for_TSAI(data, test_percentage=TEST_PERCENTAGE):
     splits = get_splits(labels, valid_size=test_percentage, stratify=True, random_state=RNDM, shuffle=True)
     return features, labels, splits
 
-fS, lS, sS = split_for_TSAI(test)
+fS, lS, sS = split_for_TSAI(data=test)
 fS.shape # (1686, 45, 10)
 lS.shape # (1686,)
 len(sS[0]) # 1349
 len(sS[1]) # 337
 testS = fS, lS, sS
-
-
 
 def split_reconfigure_for_GBM(split_data):
     "Takes TSAI shaped X,Y,splits, and returns x_train, y_train, x_test, y_test shaped for GBM"
@@ -960,7 +958,7 @@ def split_reconfigure_for_GBM(split_data):
     x_test_GBM, y_test_GBM = reshape_to_GBM(data=data_test)
     return x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM
 
-x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM = split_reconfigure_for_GBM(testS)
+x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM = split_reconfigure_for_GBM(split_data=testS)
 x_train_GMB.shape # (1349, 450)
 y_train_GBM.shape # (1349,)
 x_test_GBM.shape # (337, 450)
@@ -969,43 +967,274 @@ y_test_GBM.shape # (337,)
 ################
 # * GBM experiment
 ################
+
 def create_GBM_training_data():
     a = sampledData(areas=area_grid(DATA_train),
                     eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
                     trait = 'HEIGHT')
     b = split_for_TSAI(a)
-    return split_reconfigure_for_GBM(b)
+    c = split_reconfigure_for_GBM(b)
+    return c
 
-x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data()
-x_train_GMB.shape # (1349, 450)
+x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data()
+x_train_GBM.shape # (1349, 450)
 y_train_GBM.shape # (1349,)
 x_test_GBM.shape # (337, 450)
 y_test_GBM.shape # (337,)
 
-def create_TSAI_training_data():
-    a = sampledData(areas=area_grid(DATA_train),
-                    eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
-                    trait = 'HEIGHT')
-    return split_for_TSAI(a)
-
-x_TSAI, y_TSAI, splits = create_TSAI_training_data()
-x_TSAI.shape # (1686, 45, 10)
-y_TSAI.shape # (1686,)
-len(splits[0]) # 1349
-len(splits[1]) # 337
-
 ######### ** Train
+
+#accumulated args
+print(x_train_GBM)
+print(y_train_GBM)
+print(x_test_GBM)
+print(y_test_GBM)
+
+print(objective)
+print(trait_name)
+print(area_name)
+
+print(predicted_labels_test)
+print(class_names)
+feature_names = ["str", "str2"]
+print(model)
+t #times dimension count
+f # features dimension count
+
+def trainGBM(objective = 'multiclass', #multiclass  regression, lambdarank
+             area_name = 'test-area',
+             trait_name = 'HEIGHT',
+             x_train=x_train_GBM,
+             y_train=y_train_GBM,):
+
+    learning_rate=0.1
+    # count training classes
+    n_labels_unique = len(np.unique(y_train))
+    # Set up the model
+    if objective is 'multiclass':
+        model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
+    if objective is 'regression':
+        model = lgb.LGBMRegressor(objective=objective, metric="logloss",learning_rate=learning_rate, random_state=RNDM)
+    if objective is 'lambdarank':
+        print("must set the group https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835")
+        model = lgb.LGBMRanker(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
+
+    # Train the model
+    model.fit(x_train, y_train)
+    # Save the model
+    joblib.dump(model, os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}.pkl"))
+
+trainGBM(objective='multiclass')
+trainGBM(objective='regression')
+trainGBM(objective='lambdarank')
+
 ######### ** Validate
+
+#args
+trait_name = 'height'
+trait_type ='categorical'
+print(x_test_GBM)
+
+# Load the model
+model_path = os.path.join(RESULTS_DIR, f"test-area-{trait_name}-{trait_type}.pkl")
+model = joblib.load(model_path)
+# Predict the test labels
+predicted_labels_test = model.predict(x_test_GBM)
+
+
 #####
 # *** F1 etc table
+
+#args
+print(y_test_GBM)
+print(predicted_labels_test )
+print(class_names)
+
+class_names = ['black', 'white']
+class_labels_float = np.unique(y_test_GBM)
+class_labels = [int(x) for x in class_labels_float]
+
+mask = np.in1d(predicted_labels_test, y_test_GBM)
+predictions = predicted_labels_test[mask]
+true_labels = y_test_GBM[mask]
+
+# Extract and display metrics
+accuracy = metrics.accuracy_score(true_labels, predictions)
+avg_f1_score = metrics.f1_score(true_labels, predictions, average="weighted")
+print("Classification accuracy {:.1f}%".format(100 * accuracy))
+print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
+
+f1_scores = metrics.f1_score(true_labels, predictions, labels=class_labels, average=None)
+recall = metrics.recall_score(true_labels, predictions, labels=class_labels, average=None)
+precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
+print("             Class              =  F1  | Recall | Precision")
+print("         --------------------------------------------------")
+for idx, name in enumerate([class_names[idx] for idx in class_labels]):
+    line_data = (name, f1_scores[idx] * 100, recall[idx] * 100, precision[idx] * 100)
+    print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
+
 #####
 # *** Confusion matrices
+
+def plot_confusion_matrix(
+    confusion_matrix,
+    classes,
+    normalize=False,
+    title,
+    ylabel="True label",
+    xlabel="Predicted label"):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if normalize:
+        normalisation_factor = confusion_matrix.sum(axis=1)[:, np.newaxis] + np.finfo(float).eps
+        confusion_matrix = confusion_matrix.astype("float") / normalisation_factor
+
+    np.set_printoptions(precision=2, suppress=True)
+
+    plt.imshow(confusion_matrix, interpolation="nearest", cmap=plt.cm.Blues, vmin=0, vmax=1)
+    plt.title(title, fontsize=20)
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=90, fontsize=20)
+    plt.yticks(tick_marks, classes, fontsize=20)
+
+    threshold = confusion_matrix.max() / 2.0
+    for i, j in itertools.product(range(confusion_matrix.shape[0]), range(confusion_matrix.shape[1])):
+        plt.text(j, i,
+            format(confusion_matrix[i, j], ".2f" if normalize else "d"),
+            horizontalalignment="center",
+            color="white" if confusion_matrix[i, j] > threshold else "black",
+            fontsize=12,
+        )
+    plt.tight_layout()
+    plt.ylabel(ylabel, fontsize=20)
+    plt.xlabel(xlabel, fontsize=20)
+
+
+# args
+trait_name = 'height'
+print(predicted_labels_test)
+print(y_test_GBM)
+print(class_names)
+
+mask = np.in1d(predicted_labels_test, y_test_GBM)
+predictions = predicted_labels_test[mask]
+true_labels = y_test_GBM[mask]
+
+class_names = ['black', 'white']
+class_labels_float = np.unique(y_test_GBM)
+class_labels = [int(x) for x in class_labels_float]
+
+fig = plt.figure(figsize=(20, 20))
+
+plt.subplot(1, 2, 1)
+plot_confusion_matrix(
+    metrics.confusion_matrix(true_labels, predictions),
+    classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
+    normalize=True,
+    ylabel="Truth",
+    xlabel="Predicted (GBM)",
+    title= f"Confusion matrix: {trait_name}")
+
+plt.subplot(1, 2, 2)
+plot_confusion_matrix(
+    metrics.confusion_matrix(predictions, true_labels),
+    classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
+    normalize=True,
+    xlabel="Truth",
+    ylabel="Predicted (GBM)",
+    title=f"Transposed Confusion matrix: {trait_name}")
+
+plt.tight_layout()
+
 #####
 # *** Class balance
+
+
+#args
+print(y_test_GBM)
+print(class_names)
+
+fig = plt.figure(figsize=(20, 5))
+label_ids, label_counts = np.unique(y_train_GBM, return_counts=True)
+label_ids = [int(x) for x in label_ids]
+plt.bar(range(len(label_ids)), label_counts)
+plt.xticks(range(len(label_ids)),
+           [class_names[i] if i in class_names else str(i) for i in label_ids],
+           rotation=45,
+           fontsize=20)
+plt.yticks(fontsize=20);
+
 #####
 # *** ROC and AUC
+
+#args
+print(y_test_GBM)
+print(y_train_GBM)
+print(x_test_GBM)
+
+class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
+scores_test = model.predict_proba(x_test_GBM)
+labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
+fpr, tpr, roc_auc = {}, {}, {}
+
+for idx, _ in enumerate(class_labels):
+    fpr[idx], tpr[idx], _ = metrics.roc_curve(labels_binarized[:, idx], scores_test[:, idx])
+    roc_auc[idx] = metrics.auc(fpr[idx], tpr[idx])
+plt.figure(figsize=(20, 10))
+
+for idx, lbl in enumerate(class_labels):
+    if np.isnan(roc_auc[idx]):
+        continue
+    plt.plot(
+        fpr[idx],
+        tpr[idx],
+        color=lulc_cmap.colors[lbl], # &&&
+        lw=2,
+        label=class_names[lbl] + " ({:0.5f})".format(roc_auc[idx]),
+    )
+
+plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
+plt.xlim([0.0, 0.99])
+plt.ylim([0.0, 1.05])
+plt.xlabel("False Positive Rate", fontsize=20)
+plt.ylabel("True Positive Rate", fontsize=20)
+plt.xticks(fontsize=20)
+plt.yticks(fontsize=20)
+plt.title("ROC Curve", fontsize=20)
+plt.legend(loc="center right", prop={"size": 15})
+plt.show()
+
 #####
 # *** Feature importance
+
+
+#args
+print(model)
+t #times dimension count
+f # features dimension count
+
+# Get feature importances and reshape them to dates and features
+feature_importances = model.feature_importances_.reshape((t, f))
+
+fig = plt.figure(figsize=(15, 15))
+ax = plt.gca()
+
+# Plot the importances
+im = ax.imshow(feature_importances, aspect=0.25)
+plt.xticks(range(len(feature_names)), feature_names, rotation=45, fontsize=20)
+plt.yticks(range(t), [f"T{i}" for i in range(t)], fontsize=20)
+plt.xlabel("Bands and band related features", fontsize=20)
+plt.ylabel("Time frames", fontsize=20)
+ax.xaxis.tick_top()
+ax.xaxis.set_label_position("top")
+
+fig.subplots_adjust(wspace=0, hspace=0)
+
+cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
+cb.ax.tick_params(labelsize=20)
+
 ######### ** Predict
 #####
 # *** visualize prediction
@@ -1019,6 +1248,17 @@ len(splits[1]) # 337
 ################
 # * TST experiment
 ################
+def create_TSAI_training_data():
+    a = sampledData(areas=area_grid(DATA_train),
+                    eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
+                    trait = 'HEIGHT')
+    return split_for_TSAI(a)
+
+x_TSAI, y_TSAI, splits = create_TSAI_training_data()
+x_TSAI.shape # (1686, 45, 10)
+y_TSAI.shape # (1686,)
+len(splits[0]) # 1349
+len(splits[1]) # 337
 ######### ** Train
 #####
 # *** Unsupervised training

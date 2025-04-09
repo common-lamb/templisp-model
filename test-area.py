@@ -984,28 +984,11 @@ y_test_GBM.shape # (337,)
 
 ######### ** Train
 
-#accumulated args
-print(x_train_GBM)
-print(y_train_GBM)
-print(x_test_GBM)
-print(y_test_GBM)
-
-print(objective)
-print(trait_name)
-print(area_name)
-
-print(predicted_labels_test)
-print(class_names)
-feature_names = ["str", "str2"]
-print(model)
-t #times dimension count
-f # features dimension count
-
-def trainGBM(objective = 'multiclass', #multiclass  regression, lambdarank
-             area_name = 'test-area',
-             trait_name = 'HEIGHT',
-             x_train=x_train_GBM,
-             y_train=y_train_GBM,):
+def trainGBM(objective,
+             area_name,
+             trait_name,
+             x_train_GBM,
+             y_train_GBM,):
 
     learning_rate=0.1
     # count training classes
@@ -1020,58 +1003,52 @@ def trainGBM(objective = 'multiclass', #multiclass  regression, lambdarank
         model = lgb.LGBMRanker(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
 
     # Train the model
-    model.fit(x_train, y_train)
+    model.fit(x_train_GBM, y_train_GBM)
     # Save the model
     joblib.dump(model, os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}.pkl"))
 
-trainGBM(objective='multiclass')
-trainGBM(objective='regression')
-trainGBM(objective='lambdarank')
+trainGBM(objective='multiclass', area_name = 'test-area', trait_name = 'HEIGHT', x_train_GBM=x_train_GBM, y_train_GBM=y_train_GBM,)
 
 ######### ** Validate
 
-#args
-trait_name = 'height'
-trait_type ='categorical'
-print(x_test_GBM)
+def predictGBM(x_test_GBM, area_name, trait_name, objective):
+    # Load the model
+    model_path = os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}.pkl")
+    model = joblib.load(model_path)
+    # Predict the test labels
+    predicted_labels_test = model.predict(x_test_GBM)
+    return predicted_labels_test, model
 
-# Load the model
-model_path = os.path.join(RESULTS_DIR, f"test-area-{trait_name}-{trait_type}.pkl")
-model = joblib.load(model_path)
-# Predict the test labels
-predicted_labels_test = model.predict(x_test_GBM)
-
+predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', )
 
 #####
 # *** F1 etc table
 
-#args
-print(y_test_GBM)
-print(predicted_labels_test )
-print(class_names)
+def report_F1Table(y_test_GBM, predicted_labels_test, class_names):
 
-class_names = ['black', 'white']
-class_labels_float = np.unique(y_test_GBM)
-class_labels = [int(x) for x in class_labels_float]
+    class_labels_float = np.unique(y_test_GBM)
+    class_labels = [int(x) for x in class_labels_float]
 
-mask = np.in1d(predicted_labels_test, y_test_GBM)
-predictions = predicted_labels_test[mask]
-true_labels = y_test_GBM[mask]
+    mask = np.in1d(predicted_labels_test, y_test_GBM)
+    predictions = predicted_labels_test[mask]
+    true_labels = y_test_GBM[mask]
 
-# Extract and display metrics
-accuracy = metrics.accuracy_score(true_labels, predictions)
-avg_f1_score = metrics.f1_score(true_labels, predictions, average="weighted")
-print("Classification accuracy {:.1f}%".format(100 * accuracy))
-print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
+    # Extract and display metrics
+    accuracy = metrics.accuracy_score(true_labels, predictions)
+    avg_f1_score = metrics.f1_score(true_labels, predictions, average="weighted")
+    print("Classification accuracy {:.1f}%".format(100 * accuracy))
+    print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
 
-f1_scores = metrics.f1_score(true_labels, predictions, labels=class_labels, average=None)
-recall = metrics.recall_score(true_labels, predictions, labels=class_labels, average=None)
-precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
-print("             Class              =  F1  | Recall | Precision")
-print("         --------------------------------------------------")
-for idx, name in enumerate([class_names[idx] for idx in class_labels]):
-    line_data = (name, f1_scores[idx] * 100, recall[idx] * 100, precision[idx] * 100)
-    print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
+    f1_scores = metrics.f1_score(true_labels, predictions, labels=class_labels, average=None)
+    recall = metrics.recall_score(true_labels, predictions, labels=class_labels, average=None)
+    precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
+    print("             Class              =  F1  | Recall | Precision")
+    print("         --------------------------------------------------")
+    for idx, name in enumerate([class_names[idx] for idx in class_labels]):
+        line_data = (name, f1_scores[idx] * 100, recall[idx] * 100, precision[idx] * 100)
+        print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
+
+report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=['black', 'white'])
 
 #####
 # *** Confusion matrices
@@ -1084,7 +1061,7 @@ def plot_confusion_matrix(
     ylabel="True label",
     xlabel="Predicted label"):
     """
-    This function prints and plots the confusion matrix.
+    prints and plots the confusion matrix.
     Normalization can be applied by setting `normalize=True`.
     """
     if normalize:
@@ -1111,129 +1088,160 @@ def plot_confusion_matrix(
     plt.ylabel(ylabel, fontsize=20)
     plt.xlabel(xlabel, fontsize=20)
 
+def show_std_T_confusionMatrix(predicted_labels_test,
+                               y_test_GBM,
+                               trait_name,
+                               class_names
+                               ):
 
-# args
-trait_name = 'height'
-print(predicted_labels_test)
-print(y_test_GBM)
-print(class_names)
+    mask = np.in1d(predicted_labels_test, y_test_GBM)
+    predictions = predicted_labels_test[mask]
+    true_labels = y_test_GBM[mask]
 
-mask = np.in1d(predicted_labels_test, y_test_GBM)
-predictions = predicted_labels_test[mask]
-true_labels = y_test_GBM[mask]
+    class_labels_float = np.unique(y_test_GBM)
+    class_labels = [int(x) for x in class_labels_float]
 
-class_names = ['black', 'white']
-class_labels_float = np.unique(y_test_GBM)
-class_labels = [int(x) for x in class_labels_float]
+    fig = plt.figure(figsize=(20, 20))
 
-fig = plt.figure(figsize=(20, 20))
+    plt.subplot(1, 2, 1)
+    plot_confusion_matrix(
+        metrics.confusion_matrix(true_labels, predictions),
+        classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
+        normalize=True,
+        ylabel="Truth",
+        xlabel="Predicted (GBM)",
+        title= f"Confusion matrix: {trait_name}")
 
-plt.subplot(1, 2, 1)
-plot_confusion_matrix(
-    metrics.confusion_matrix(true_labels, predictions),
-    classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
-    normalize=True,
-    ylabel="Truth",
-    xlabel="Predicted (GBM)",
-    title= f"Confusion matrix: {trait_name}")
+    plt.subplot(1, 2, 2)
+    plot_confusion_matrix(
+        metrics.confusion_matrix(predictions, true_labels),
+        classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
+        normalize=True,
+        xlabel="Truth",
+        ylabel="Predicted (GBM)",
+        title=f"Transposed Confusion matrix: {trait_name}")
 
-plt.subplot(1, 2, 2)
-plot_confusion_matrix(
-    metrics.confusion_matrix(predictions, true_labels),
-    classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
-    normalize=True,
-    xlabel="Truth",
-    ylabel="Predicted (GBM)",
-    title=f"Transposed Confusion matrix: {trait_name}")
+    plt.tight_layout()
 
-plt.tight_layout()
-
+show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
+                               y_test_GBM=y_test_GBM,
+                               trait_name='HEIGHT',
+                               class_names=['black', 'white']
+                               )
 #####
 # *** Class balance
 
+def show_ClassBalance(y_train_GBM, class_names):
 
-#args
-print(y_test_GBM)
-print(class_names)
+    fig = plt.figure(figsize=(20, 5))
+    label_ids, label_counts = np.unique(y_train_GBM, return_counts=True)
+    label_ids = [int(x) for x in label_ids]
+    plt.bar(range(len(label_ids)), label_counts)
+    plt.xticks(range(len(label_ids)),
+               [class_names[i] if i in class_names else str(i) for i in label_ids],
+               rotation=45,
+               fontsize=20)
+    plt.yticks(fontsize=20);
 
-fig = plt.figure(figsize=(20, 5))
-label_ids, label_counts = np.unique(y_train_GBM, return_counts=True)
-label_ids = [int(x) for x in label_ids]
-plt.bar(range(len(label_ids)), label_counts)
-plt.xticks(range(len(label_ids)),
-           [class_names[i] if i in class_names else str(i) for i in label_ids],
-           rotation=45,
-           fontsize=20)
-plt.yticks(fontsize=20);
-
+show_ClassBalance(y_train_GBM=y_train_GBM, class_names=['black', 'white'])
 #####
 # *** ROC and AUC
 
-#args
-print(y_test_GBM)
-print(y_train_GBM)
-print(x_test_GBM)
+def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM):
 
-class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
-scores_test = model.predict_proba(x_test_GBM)
-labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
-fpr, tpr, roc_auc = {}, {}, {}
+    class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
+    labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
+    scores_test = model.predict_proba(x_test_GBM)
+    colors = plt.cm.Set1.colors
 
-for idx, _ in enumerate(class_labels):
-    fpr[idx], tpr[idx], _ = metrics.roc_curve(labels_binarized[:, idx], scores_test[:, idx])
-    roc_auc[idx] = metrics.auc(fpr[idx], tpr[idx])
-plt.figure(figsize=(20, 10))
+    fpr, tpr, roc_auc = {}, {}, {}
+    for idx, _ in enumerate(class_labels):
+        fpr[idx], tpr[idx], _ = metrics.roc_curve(labels_binarized[:, idx], scores_test[:, idx])
+        roc_auc[idx] = metrics.auc(fpr[idx], tpr[idx])
 
-for idx, lbl in enumerate(class_labels):
-    if np.isnan(roc_auc[idx]):
-        continue
-    plt.plot(
-        fpr[idx],
-        tpr[idx],
-        color=lulc_cmap.colors[lbl], # &&&
-        lw=2,
-        label=class_names[lbl] + " ({:0.5f})".format(roc_auc[idx]),
-    )
+    plt.figure(figsize=(20, 10))
+    for idx, lbl in enumerate(class_labels):
+        if np.isnan(roc_auc[idx]):
+            continue
+        plt.plot(
+            fpr[idx],
+            tpr[idx],
+            color=colors[idx],
+            lw=2,
+            label=class_names[idx] + " ({:0.5f})".format(roc_auc[idx]),
+        )
 
-plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
-plt.xlim([0.0, 0.99])
-plt.ylim([0.0, 1.05])
-plt.xlabel("False Positive Rate", fontsize=20)
-plt.ylabel("True Positive Rate", fontsize=20)
-plt.xticks(fontsize=20)
-plt.yticks(fontsize=20)
-plt.title("ROC Curve", fontsize=20)
-plt.legend(loc="center right", prop={"size": 15})
-plt.show()
+    plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
+    plt.xlim([0.0, 0.99])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel("False Positive Rate", fontsize=20)
+    plt.ylabel("True Positive Rate", fontsize=20)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.title("ROC Curve", fontsize=20)
+    plt.legend(loc="center right", prop={"size": 15})
+    plt.show()
+
+show_ROCAUC(model=model, class_names=['black', 'white'], y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
 
 #####
 # *** Feature importance
 
+#accumulated args
+print(x_train_GBM)
+print(y_train_GBM)
+print(x_test_GBM)
+print(y_test_GBM)
 
-#args
-print(model)
-t #times dimension count
-f # features dimension count
+print(area_name) # str descibes area being studied eg 'test-area'
+print(trait_name) # str identifies trait in patches eg 'HEIGHT'
+print(objective) #training objective, one of 'multiclass'  'regression', 'lambdarank'
 
-# Get feature importances and reshape them to dates and features
-feature_importances = model.feature_importances_.reshape((t, f))
+print(model) # the trained model, loaded from disk
+print(predicted_labels_test) # result of predictions, counterpart to y_test
 
-fig = plt.figure(figsize=(15, 15))
-ax = plt.gca()
+print(class_names) # list of str names for classes which were predicted
 
-# Plot the importances
-im = ax.imshow(feature_importances, aspect=0.25)
-plt.xticks(range(len(feature_names)), feature_names, rotation=45, fontsize=20)
-plt.yticks(range(t), [f"T{i}" for i in range(t)], fontsize=20)
-plt.xlabel("Bands and band related features", fontsize=20)
-plt.ylabel("Time frames", fontsize=20)
-ax.xaxis.tick_top()
-ax.xaxis.set_label_position("top")
+print(feature_names) # list of str names of features which were trained on
+print(t_dim) #time dimension count
+print(f_dim) # features dimension count
 
-fig.subplots_adjust(wspace=0, hspace=0)
 
-cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
-cb.ax.tick_params(labelsize=20)
+def show_featureImportance(
+        model,
+        feature_names,
+        t_dim,
+        f_dim
+):
+    ""
+    # Get feature importances and reshape them to dates and features
+    feature_importances = model.feature_importances_.reshape((t_dim, f_dim))
+
+    fig = plt.figure(figsize=(15, 15))
+    ax = plt.gca()
+
+    # Plot the importances
+    im = ax.imshow(feature_importances, aspect=0.5)
+    plt.xticks(range(len(feature_names)), feature_names, rotation=90, fontsize=20)
+    plt.yticks(range(t_dim), [f"T{i}" for i in range(t_dim)], fontsize=20)
+    plt.xlabel("Bands and band related features", fontsize=20)
+    plt.ylabel("Time frames", fontsize=20)
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position("top")
+
+    fig.subplots_adjust(wspace=0, hspace=0)
+    cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
+    cb.ax.tick_params(labelsize=20)
+
+# get dims
+f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = 'HEIGHT')
+f.shape[0] #t_dim
+f.shape[-1] #f_dim
+
+# get feature names
+feature_names = [f"{i}_{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
+
+show_featureImportance(model=model, feature_names=feature_names, t_dim=10, f_dim=45)
 
 ######### ** Predict
 #####

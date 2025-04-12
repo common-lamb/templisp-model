@@ -130,7 +130,7 @@ DATA_RASTERS = os.path.join(DATA_ROOT, "test-rasters") #dir rasters or test-rast
 DATA_TABLE= os.path.join(DATA_ROOT, "tabular")
 # set expected files
 DATA_train = os.path.join(DATA_AREAS, "test-AOI-north.gpkg")
-DATA_test = os.path.join(DATA_AREAS, "test-AOI-south.gpkg")
+DATA_validate = os.path.join(DATA_AREAS, "test-AOI-south.gpkg")
 DATA_all =  os.path.join(DATA_AREAS, "test-AOI.gpkg")
 DATA_ids = os.path.join(DATA_IDS, "identities.gpkg")
 DATA_table = os.path.join(DATA_TABLE, "field-data.csv")
@@ -526,15 +526,15 @@ def execute_prepared_workflow(workflow_and_args):
             f"For more info check report at {executor.get_report_path()}"
         )
 
-def ask_loadgeotiffs():
+def ask_loadgeotiffs(areas, eopatch_dir):
     print("TIME INTENSIVE JOB load all geotiffs into training eopatches stacked")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         execute_prepared_workflow(CreateStackLoaderWorkflow(indicators=unique_tif_indicators(),
-                                                            areas=area_grid(DATA_train),
-                                                            eopatch_dir=EOPATCH_TRAIN_DIR ))
+                                                            areas=areas,
+                                                            eopatch_dir=eopatch_dir ))
 
-ask_loadgeotiffs()
+ask_loadgeotiffs(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Load timestamps etc
 
@@ -746,14 +746,14 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
 
     return workflow, execution_args
 
-def ask_loadDetails():
+def ask_loadDetails(areas, eopatch_dir):
     print("Load masks and timestamps to the patches after the gtiff stacks")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=area_grid(DATA_train),
+        execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=areas,
                                                           observations=bind_observations(),
-                                                          eopatch_dir=EOPATCH_TRAIN_DIR))
-ask_loadDetails()
+                                                              eopatch_dir=eopatch_dir))
+ask_loadDetails(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Visualize layers
 #####
@@ -987,6 +987,7 @@ y_test_GBM.shape # (337,)
 def trainGBM(objective,
              area_name,
              trait_name,
+             model_type,
              x_train_GBM,
              y_train_GBM,):
 
@@ -1005,21 +1006,25 @@ def trainGBM(objective,
     # Train the model
     model.fit(x_train_GBM, y_train_GBM)
     # Save the model
-    joblib.dump(model, os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}.pkl"))
+    joblib.dump(model, os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
 
-trainGBM(objective='multiclass', area_name = 'test-area', trait_name = 'HEIGHT', x_train_GBM=x_train_GBM, y_train_GBM=y_train_GBM,)
+trainGBM(objective='multiclass', area_name = 'test-area', trait_name = 'HEIGHT', model_type='GBM', x_train_GBM=x_train_GBM, y_train_GBM=y_train_GBM,)
 
 ######### ** Validate
 
-def predictGBM(x_test_GBM, area_name, trait_name, objective):
+def loadModel(area_name, trait_name, objective, model_type):
     # Load the model
-    model_path = os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}.pkl")
+    model_path = os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl")
     model = joblib.load(model_path)
+    return model
+
+def predictGBM(x_test_GBM, area_name, trait_name, objective, model_type):
+    model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
     # Predict the test labels
     predicted_labels_test = model.predict(x_test_GBM)
     return predicted_labels_test, model
 
-predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', )
+predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', model_type='GBM')
 
 #####
 # *** F1 etc table
@@ -1244,6 +1249,111 @@ feature_names = [f"{i}_{s}" for i in unique_tif_indicators()['indices'] for s in
 show_featureImportance(model=model, feature_names=feature_names, t_dim=10, f_dim=45)
 
 ######### ** Predict
+
+# prepare eopatches for the validation area
+test = area_grid(DATA_validate, show=True)
+ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+ask_loadDetails(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+eopatch
+
+class PredictPatchTask(EOTask):
+    """
+    Task to make model predictions on a patch. Provide the model and the feature,
+    and the output names of labels and scores (optional)
+    """
+
+    def __init__(self, model, model_type, feature, predicted_trait_name, predicted_scores_name=None):
+        self.model = model
+        self.model_type = model_type
+        self.feature = feature
+        self.predicted_trait_name = predicted_trait_name
+        self.predicted_scores_name = predicted_scores_name
+
+    def execute(self, eopatch):
+        features = eopatch[self.feature]
+        t, w, h, f = features.shape
+        #make fake labels array of w,h,1
+        fake_labels = np.zeros((w,h,1))
+
+        data = features, fake_labels
+        features_TSAI, fake_labels_back = reshape_eopatch_to_TSAI(data=data)
+        features_GBM, fake_labels_back = reshape_to_GBM(data=features_TSAI)
+
+        if self.model_type is 'GBM':
+            #do GBM shaped actions
+
+            predicted_trait= self.model.predict(features_GBM)
+
+            predicted_trait= predicted_trait.reshape(w, h)
+            predicted_trait= predicted_trait[..., np.newaxis]
+            eopatch[(FeatureType.DATA_TIMELESS, self.predicted_trait_name)] = predicted_trait
+
+            if self.predicted_scores_name:
+                predicted_scores = self.model.predict_proba(features_GBM)
+                _, d = predicted_scores.shape
+                predicted_scores = predicted_scores.reshape(w, h, d)
+                eopatch[(FeatureType.DATA_TIMELESS, self.predicted_scores_name)] = predicted_scores
+
+            return eopatch
+        elif self.model_type is 'TSAI':
+            #do TSAI shaped actions
+            print('&&&')
+        else:
+            raise ValueError('Model type not recognized')
+
+def CreatePredictionWorkflow(areas, eopatch_dir, trait_name, model, model_type):
+    "Creates a workflow to predict trait on validation eopatches. "
+
+    eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
+    data_keys = sorted(list(eopatch.data.keys()))
+    predicted_trait_label = f"PREDICTED_{trait_name}"
+    predicted_trait_score_label = f"PREDICTED_{trait_name}_SCORE"
+
+    load_task = LoadTask(eopatch_dir)
+
+    ######### ** Concatenate
+    concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "FEATURES_TRAINING"))
+
+    # predict
+    predict_task = PredictPatchTask(model=model,
+                                    model_type=model_type,
+                                    feature=(FeatureType.DATA, "FEATURES_TRAINING"),
+                                    predicted_trait_name=predicted_trait_label,
+                                    predicted_scores_name=predicted_trait_score_label)
+
+    save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
+
+    # node list
+    workflow_nodes = linearly_connect_tasks(load_task, concatenate_task, predict_task, save_task)
+
+    # workflow
+    workflow = EOWorkflow(workflow_nodes)
+
+    # additional arguments
+    execution_args = []
+    for idx, bbox in enumerate(areas):
+        execution_args.append(
+            {
+                workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
+                workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"} # save task is last
+            }
+        )
+
+    return workflow, execution_args
+
+def ask_PredictPatches():
+    print("predict validation area EOPatches?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                           trait_name='HEIGHT',
+                                                           model = loadModel(area_name='test-area', trait_name='HEIGHT', objective='multiclass', model_type='GBM'),
+                                                           model_type = 'GBM'))
+
+ask_PredictPatches()
+
 #####
 # *** visualize prediction
 ######### ** Quantify prediction

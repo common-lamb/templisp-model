@@ -162,7 +162,7 @@ def dir_file_enforce():
     for d in (DATA_ROOT, DATA_AREAS, DATA_IDS, DATA_RASTERS, DATA_TABLE):
         if not os.path.exists(d):
             raise FileNotFoundError(f"Input directory not found: {d}")
-    for f in (DATA_train, DATA_test, DATA_all, DATA_ids, DATA_table):
+    for f in (DATA_train, DATA_validate, DATA_all, DATA_ids, DATA_table):
         if not os.path.exists(f):
             raise FileNotFoundError(f"Input file not found: {f}")
     # make exist
@@ -250,7 +250,7 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
             raise ValueError (f"Shape mismatch in {tif}")
 
     # crs checks
-    for f in [DATA_train, DATA_test, DATA_all, DATA_ids]:
+    for f in [DATA_train, DATA_validate, DATA_all, DATA_ids]:
         extent = gpd.read_file(f)
         crs = extent.crs
         if not crs == CRS:
@@ -545,7 +545,7 @@ class AddTimestamps(EOTask):
         self.dates = self.indicators['dates']
     def _toDatetime(self, stringlist):
         fmt = '%Y-%m-%d'
-        return [datetime.datetime.strptime(s, fmt) for s in stringlist]
+        return [datetime.strptime(s, fmt) for s in stringlist]
     def execute(self, eopatch):
         eopatch.timestamps = self._toDatetime(self.dates)
         return eopatch
@@ -753,6 +753,7 @@ def ask_loadDetails(areas, eopatch_dir):
         execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=areas,
                                                           observations=bind_observations(),
                                                               eopatch_dir=eopatch_dir))
+
 ask_loadDetails(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Visualize layers
@@ -1008,7 +1009,19 @@ def trainGBM(objective,
     # Save the model
     joblib.dump(model, os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
 
-trainGBM(objective='multiclass', area_name = 'test-area', trait_name = 'HEIGHT', model_type='GBM', x_train_GBM=x_train_GBM, y_train_GBM=y_train_GBM,)
+
+def ask_trainGBM():
+    print("train GBM model?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        trainGBM(objective='multiclass',
+                 area_name='test-area',
+                 trait_name='HEIGHT',
+                 model_type='GBM',
+                 x_train_GBM=x_train_GBM,
+                 y_train_GBM=y_train_GBM,)
+
+ask_trainGBM()
 
 ######### ** Validate
 
@@ -1061,8 +1074,8 @@ report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_tes
 def plot_confusion_matrix(
     confusion_matrix,
     classes,
-    normalize=False,
     title,
+    normalize=False,
     ylabel="True label",
     xlabel="Predicted label"):
     """
@@ -1259,16 +1272,15 @@ eopatch
 
 class PredictPatchTask(EOTask):
     """
-    Task to make model predictions on a patch. Provide the model and the feature,
-    and the output names of labels and scores (optional)
+    Make model predictions on a patch. Optionally include probas
     """
 
-    def __init__(self, model, model_type, feature, predicted_trait_name, predicted_scores_name=None):
+    def __init__(self, model, model_type, feature, predicted_trait_name, predicted_probas_name=None):
         self.model = model
         self.model_type = model_type
         self.feature = feature
         self.predicted_trait_name = predicted_trait_name
-        self.predicted_scores_name = predicted_scores_name
+        self.predicted_probas_name = predicted_probas_name
 
     def execute(self, eopatch):
         features = eopatch[self.feature]
@@ -1276,24 +1288,28 @@ class PredictPatchTask(EOTask):
         #make fake labels array of w,h,1
         fake_labels = np.zeros((w,h,1))
 
-        data = features, fake_labels
-        features_TSAI, fake_labels_back = reshape_eopatch_to_TSAI(data=data)
-        features_GBM, fake_labels_back = reshape_to_GBM(data=features_TSAI)
+        datatoTSAI = features, fake_labels
+        data_TSAI = reshape_eopatch_to_TSAI(data=datatoTSAI)
+        features_TSAI, fake_labels_back = data_TSAI
+
+        data_GBM = reshape_to_GBM(data=data_TSAI)
+        features_GBM, fake_labels_back = data_GBM
+        del fake_labels_back
+
 
         if self.model_type is 'GBM':
             #do GBM shaped actions
-
             predicted_trait= self.model.predict(features_GBM)
 
             predicted_trait= predicted_trait.reshape(w, h)
             predicted_trait= predicted_trait[..., np.newaxis]
             eopatch[(FeatureType.DATA_TIMELESS, self.predicted_trait_name)] = predicted_trait
 
-            if self.predicted_scores_name:
+            if self.predicted_probas_name:
                 predicted_scores = self.model.predict_proba(features_GBM)
                 _, d = predicted_scores.shape
                 predicted_scores = predicted_scores.reshape(w, h, d)
-                eopatch[(FeatureType.DATA_TIMELESS, self.predicted_scores_name)] = predicted_scores
+                eopatch[(FeatureType.DATA_TIMELESS, self.predicted_probas_name)] = predicted_scores
 
             return eopatch
         elif self.model_type is 'TSAI':
@@ -1302,13 +1318,11 @@ class PredictPatchTask(EOTask):
         else:
             raise ValueError('Model type not recognized')
 
-def CreatePredictionWorkflow(areas, eopatch_dir, trait_name, model, model_type):
+def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objective, model_type):
     "Creates a workflow to predict trait on validation eopatches. "
-
+    model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
     eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
     data_keys = sorted(list(eopatch.data.keys()))
-    predicted_trait_label = f"PREDICTED_{trait_name}"
-    predicted_trait_score_label = f"PREDICTED_{trait_name}_SCORE"
 
     load_task = LoadTask(eopatch_dir)
 
@@ -1319,8 +1333,8 @@ def CreatePredictionWorkflow(areas, eopatch_dir, trait_name, model, model_type):
     predict_task = PredictPatchTask(model=model,
                                     model_type=model_type,
                                     feature=(FeatureType.DATA, "FEATURES_TRAINING"),
-                                    predicted_trait_name=predicted_trait_label,
-                                    predicted_scores_name=predicted_trait_score_label)
+                                    predicted_trait_name=f"PREDICTED_{trait_name}",
+                                    predicted_probas_name=f"PREDICTED_{trait_name}_PROBA")
 
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
@@ -1348,14 +1362,21 @@ def ask_PredictPatches():
     if proceed:
         execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
                                                            eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                           area_name='test-area',
                                                            trait_name='HEIGHT',
-                                                           model = loadModel(area_name='test-area', trait_name='HEIGHT', objective='multiclass', model_type='GBM'),
+                                                           objective='multiclass',
                                                            model_type = 'GBM'))
 
 ask_PredictPatches()
 
 #####
 # *** visualize prediction
+
+eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+eopatch
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_PROBA'))
+
 ######### ** Quantify prediction
 #####
 # *** Visualize predicted trait
@@ -1404,51 +1425,4 @@ len(splits[1]) # 337
 #####
 # *** Quantify agreement
 
-
-
-
 ############################################
-
-class MultiLoader(EOTask):
-    "Not used but kept because it was working although the shape was wrong"
-    def __init__(self, dates, indices, sigmas):
-        self.dates = dates
-        self.indices = indices
-        self.sigmas = sigmas
-    def _toDatetime(self, stringlist):
-        fmt = '%Y-%m-%d'
-        return [datetime.datetime.strptime(s, fmt) for s in stringlist]
-    def _toNParray(self, tiffs):
-        # Open and stack the tiffs
-        tiff_stack = []
-        for path in tiffs:
-            with rasterio.open(path) as src:
-                tiff_stack.append(src.read(1))  # Read the first band
-        # Convert to numpy array and reshape
-        tiff_array = np.array(tiff_stack)
-        # &&& modify channel dimension targeting t,h,w,c where c is 1
-        reshaped_array = np.expand_dims(tiff_array, axis=-1)
-        # - Before: `tiff_array.shape = (t, height, width)`
-        # - After: `tiff_array.shape = (t, height, width, 1)`
-        # &&& confirm this
-        return reshaped_array
-    def _make_safe_name(self, n, i, s):
-        # pad the counter to maintain ordering
-        zeroPaddedN = f"{n:0{4}d}"
-        unsafe = f"{zeroPaddedN}_index_{i}_sigma_{s}"
-        # need to drop decimals,invalid in feature names
-        safe = unsafe.replace('.', '-')
-        return safe
-    def execute(self, bbox):
-        eopatch = EOPatch(bbox=bbox)
-        eopatch.timestamps = self._toDatetime(self.dates)
-        eopatch.bbox = bbox
-        n = 0 # make counter and add to name to force ordering
-        for i in self.indices:
-            for s in self.sigmas:
-                name = self._make_safe_name(n, i, s)
-                tiffs = select_tif_set(self.dates, [i], [s])
-                array = self._toNParray(tiffs)
-                eopatch[FeatureType.DATA, name] = array
-                n = n + 1
-        return eopatch

@@ -1380,6 +1380,43 @@ eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_PROBA'))
 ######### ** Quantify prediction
 #####
 # *** Visualize predicted trait
+
+def cartesian_from_position(position, grid_h, grid_w):
+    "convert between the grid ordering of eopatches and matplotlib axes coordinates"
+    # area is segmented into n=row*col sections, with origin lower left, iterating rows fast ie: for cols(for rows), numbered 0...n-1
+    # plt grids are cartesian (row, col) with origin upper left
+    # &&& no safety checks
+    def invertPosition(axis_pos, axis_len):
+        lastPos = axis_len -1
+        invertedPos = lastPos - axis_pos
+        return invertedPos
+    rowInverted = position % grid_h # modulo of height gives row
+    row = invertPosition(rowInverted, grid_h) # flip to account for opposite cutting order
+    col = position // grid_h # int div of height gives col
+    return row, col
+
+def plot_prediction(grid_h, grid_w, trait_name, areas):
+    ""
+    fig, axs = plt.subplots(nrows=grid_h+1, ncols=grid_w+1, figsize=(20, 25))
+    for i in tqdm(range(len(areas))):
+        eopatch_path = os.path.join(EOPATCH_VALIDATE_DIR, f"eopatch_{i}")
+        eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
+        row, col = cartesian_from_position(i, grid_h, grid_w)
+        ax = axs[row][col]
+        im = ax.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze())
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect("auto")
+        del eopatch
+
+    fig.subplots_adjust(wspace=0, hspace=0)
+
+    cb = fig.colorbar(im, ax=axs.ravel().tolist(), orientation="horizontal", pad=0.01, aspect=100)
+    cb.ax.tick_params(labelsize=20)
+    plt.show()
+
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', areas=area_grid(DATA_validate))
+
 #####
 # *** Visualize trait diff
 #####

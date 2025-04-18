@@ -81,6 +81,7 @@ import glob
 import re
 
 import shapely.geometry
+import matplotlib.colors as colors
 import shapely.validation
 from copy import deepcopy
 from osgeo import gdal
@@ -1419,6 +1420,67 @@ plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', areas=area_grid(D
 
 #####
 # *** Visualize trait diff
+
+def plot_disagreement(areas, trait_name, inspect_ratio):
+    "&&&"
+    #pick rndm patch
+    idx = np.random.choice(range(len(areas)))
+    eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, f"eopatch_{idx}"), lazy_loading=True)
+    #set size of inspection window
+    w, h = eopatch.data_timeless[trait_name].squeeze().shape
+    inspect_ratio = min (inspect_ratio, 1)
+    smallest_side = min(w, h)
+    inspect_size = math.floor(smallest_side * inspect_ratio)
+    w_min = np.random.choice(range(w - inspect_size))
+    w_max = w_min + inspect_size
+    h_min = np.random.choice(range(h - inspect_size))
+    h_max = h_min + inspect_size
+
+    # Draw the Reference map
+    fig = plt.figure(figsize=(20, 20))
+
+    ax = plt.subplot(2, 2, 1)
+    plt.imshow(eopatch.data_timeless[trait_name].squeeze()[w_min:w_max, h_min:h_max])
+    plt.colorbar(label=f"{trait_name}")
+    plt.xticks([])
+    plt.yticks([])
+    ax.set_aspect("auto")
+    plt.title(f"Ground Truth: {trait_name}", fontsize=20)
+
+    ax = plt.subplot(2, 2, 2)
+    plt.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze()[w_min:w_max, h_min:h_max])
+    plt.colorbar(label=f"{trait_name}")
+    plt.xticks([])
+    plt.yticks([])
+    ax.set_aspect("auto")
+    plt.title("Prediction", fontsize=20)
+
+    ax = plt.subplot(2, 2, 3)
+    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze() != eopatch.data_timeless[trait_name].squeeze()
+    plt.imshow(mask[w_min:w_max, h_min:h_max], cmap="gray")
+    cbar = plt.colorbar(label="Disagreement")
+    cbar.set_ticks([0, 1])
+    cbar.set_ticklabels(["Agree", "Disagree"])
+    plt.xticks([])
+    plt.yticks([])
+    ax.set_aspect("auto")
+    plt.title("Disagreement", fontsize=20)
+
+    ax = plt.subplot(2, 2, 4)
+    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze() - eopatch.data_timeless[trait_name].squeeze()
+    vmax = max(abs(mask.min()), abs(mask.max()))
+    norm = colors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
+    plt.imshow(mask[w_min:w_max, h_min:h_max], cmap="seismic", norm=norm)
+    plt.colorbar(label="Difference")
+    plt.xticks([])
+    plt.yticks([])
+    ax.set_aspect("auto")
+    plt.title("Difference", fontsize=20)
+
+    fig.subplots_adjust(wspace=0.1, hspace=0.1)
+
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99)
+
 #####
 # *** Quantify agreement
 ################

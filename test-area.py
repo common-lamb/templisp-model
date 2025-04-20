@@ -76,32 +76,30 @@
 
 ######### ** Import
 import os
+import sys
 import pathlib
 import glob
 import re
-
-import shapely.geometry
-import matplotlib.colors as colors
-import shapely.validation
 from copy import deepcopy
-from osgeo import gdal
-from fiona.collection import BytesCollection
-from collections import defaultdict
-import sys
-import itertools
 import joblib
-import pandas as pd
-from pandas._config import dates
+import itertools
 import datetime
+
+import pandas as pd
 import numpy as np
-from sklearn import metrics, preprocessing
-import matplotlib.pyplot as plt
-from shapely.geometry import Polygon
-import lightgbm as lgb
-from tsai.all import *
 import rasterio
 import geopandas as gpd
+from osgeo import gdal
+import matplotlib.pyplot as plt
+import matplotlib.colors as colors
+import shapely.validation
+import shapely.geometry
+from shapely.geometry import Polygon
 from sentinelhub import DataCollection, UtmZoneSplitter
+
+import lightgbm as lgb
+from tsai.all import *
+from sklearn import metrics, preprocessing
 
 from eolearn.core.core_tasks import CreateEOPatchTask, InitializeFeatureTask, RemoveFeatureTask
 from eolearn.core import (EOExecutor,
@@ -300,12 +298,6 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
     print(f"Dimension of the area is {width_patch} x {height_patch} patches (rounded to nearest full patch)")
     # length of patch edge m=(m/px)*px
     edge_m =resolution*grid_size
-
-    # if show:
-    #     plt.ion()
-    #     extent.plot()
-    #     plt.axis("off")
-    #     plt.close()
 
     # Create a splitter to obtain a list of bboxes
     bbox_splitter = UtmZoneSplitter([extent_shape], extent.crs, edge_m)
@@ -840,7 +832,7 @@ ask_preparePatches()
 ################
 
 ######### ** Extract eopatches
-def sampledData(areas, eopatch_samples_dir, trait):
+def sampledData(areas, eopatch_samples_dir, trait, show=False):
     """
     Takes grid of areas, a source of eopatches, and a single trait.
     Concatenates all then Returns sampled_features and trait_eroded
@@ -854,17 +846,17 @@ def sampledData(areas, eopatch_samples_dir, trait):
     features = np.concatenate([eopatch.data["FEATURES_SAMPLED"] for eopatch in sampled_eopatches], axis=1)
     labels = np.concatenate([eopatch.data_timeless[f"{trait}_SAMPLED"] for eopatch in sampled_eopatches], axis=0)
 
-    return features, labels
+    if show:
+        print("sampledData")
+        print(f"features.shape: {features.shape}")
+        print(f"labels.shape: {labels.shape}")
 
-f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = 'HEIGHT')
-f.shape # (10, 1686, 1, 45)
-l.shape #     (1686, 1, 1)
-test = f, l
+    return features, labels
 
 ######### ** Reshape data
 
 # *** Shape for TSP
-def reshape_eopatch_to_TSAI(data):
+def reshape_eopatch_to_TSAI(data, show=False):
     """
     from eopatch as t,w,h,f
     to
@@ -879,15 +871,15 @@ def reshape_eopatch_to_TSAI(data):
     features_reshaped = np.moveaxis(features, 0, -1).reshape(fw * fh, ff, ft)
     labels_reshaped = labels.reshape(lw * lh)
 
+    if show:
+        print("reshape to TSAI")
+        print(f"features.shape: {features_reshaped.shape}")
+        print(f"labels.shape: {labels_reshaped.shape}")
+
     return features_reshaped, labels_reshaped
 
-fT, lT = reshape_eopatch_to_TSAI(data=test)
-fT.shape # (1686, 45, 10)
-lT.shape # (1686,)
-testT = fT, lT
-
 # *** Shape for GBM
-def reshape_to_GBM(data, TSAI_shape=True):
+def reshape_to_GBM(data, TSAI_shape=True, show=False):
     """
     from TSAI as s,v,t
     or from eopatch as t,w,h,f
@@ -910,31 +902,31 @@ def reshape_to_GBM(data, TSAI_shape=True):
         lw, lh, lf = labels.shape
         labels_reshaped = labels.reshape(lw * lh)
 
-    return features_reshaped, labels_reshaped
+    if show:
+        print("reshape to GBM")
+        print(f"features.shape: {features_reshaped.shape}")
+        print(f"labels.shape: {labels_reshaped.shape}")
 
-fG, lG = reshape_to_GBM(data=testT)
-fG.shape # (1686, 450)
-lG.shape # (1686,)
+    return features_reshaped, labels_reshaped
 
 #####
 # *** Split samples into train test sets
 #####
 
-def split_for_TSAI(data, test_percentage=TEST_PERCENTAGE):
+def split_for_TSAI(data, test_percentage=TEST_PERCENTAGE, show=False):
     "Takes eolearn  shaped features and labels, returns X,Y,splits shaped for TSAI"
     features, labels = reshape_eopatch_to_TSAI(data)
-    # &&& make show false optional
-    splits = get_splits(labels, valid_size=test_percentage, stratify=True, random_state=RNDM, shuffle=True)
+    splits = get_splits(labels, valid_size=test_percentage, stratify=True, random_state=RNDM, shuffle=True, show_plot=show)
+    if show:
+        print("split for TSAI")
+        print(f"features.shape: {features.shape}")
+        print(f"labels.shape: {labels.shape}")
+        print(f"len split 0 : {len(sS[0])}")
+        print(f" len split 1: {len(sS[1])}")
+
     return features, labels, splits
 
-fS, lS, sS = split_for_TSAI(data=test)
-fS.shape # (1686, 45, 10)
-lS.shape # (1686,)
-len(sS[0]) # 1349
-len(sS[1]) # 337
-testS = fS, lS, sS
-
-def split_reconfigure_for_GBM(split_data):
+def split_reconfigure_for_GBM(split_data, show=False):
     "Takes TSAI shaped X,Y,splits, and returns x_train, y_train, x_test, y_test shaped for GBM"
     features, labels, splits = split_data
 
@@ -942,47 +934,47 @@ def split_reconfigure_for_GBM(split_data):
     mask_train = np.zeros(len(features), dtype=bool)
     mask_train[split_train] = True
     x_train = features[mask_train]
-    print(x_train.shape)
     y_train = labels[mask_train]
-    print(y_train.shape)
     data_train = x_train, y_train
 
     split_test = splits[1]
     mask_test = np.zeros(len(features), dtype=bool)
     mask_test[split_test] = True
     x_test =features[mask_test]
-    print(x_test.shape)
     y_test =labels[mask_test]
-    print(y_test.shape)
     data_test = x_test, y_test
 
-    x_train_GMB, y_train_GBM = reshape_to_GBM(data=data_train)
+    x_train_GBM, y_train_GBM = reshape_to_GBM(data=data_train)
     x_test_GBM, y_test_GBM = reshape_to_GBM(data=data_test)
-    return x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM
+    if show:
+        print("splits reconfigure for GBM")
+        print(f"x_train: {x_train_GBM.shape}")
+        print(f"y_train: {y_train_GBM.shape}")
+        print(f"x_test: {x_test_GBM.shape}")
+        print(f"y_test: {y_test_GBM.shape}")
 
-x_train_GMB, y_train_GBM, x_test_GBM, y_test_GBM = split_reconfigure_for_GBM(split_data=testS)
-x_train_GMB.shape # (1349, 450)
-y_train_GBM.shape # (1349,)
-x_test_GBM.shape # (337, 450)
-y_test_GBM.shape # (337,)
+    return x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM
 
-################
 # * GBM experiment
 ################
 
-def create_GBM_training_data():
+def create_GBM_training_data(show=False):
     a = sampledData(areas=area_grid(DATA_train),
                     eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
                     trait = 'HEIGHT')
     b = split_for_TSAI(a)
     c = split_reconfigure_for_GBM(b)
+    if show:
+        x_train, y_train, x_test, y_test = c
+        print("GBM training data")
+        print(f"x_train: {x_train.shape}") # (1349, 450)
+        print(f"y_train: {y_train.shape}") # (1349,)
+        print(f"x_test: {x_test.shape}") # (337, 450)
+        print(f"y_test: {y_test.shape}") # (337,)
     return c
 
+# &&& move to execution
 x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data()
-x_train_GBM.shape # (1349, 450)
-y_train_GBM.shape # (1349,)
-x_test_GBM.shape # (337, 450)
-y_test_GBM.shape # (337,)
 
 ######### ** Train
 
@@ -1001,6 +993,7 @@ def trainGBM(objective,
         model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
     if objective is 'regression':
         model = lgb.LGBMRegressor(objective=objective, metric="logloss",learning_rate=learning_rate, random_state=RNDM)
+        # &&&  metric etc
     if objective is 'lambdarank':
         print("must set the group https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835")
         model = lgb.LGBMRanker(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
@@ -1038,8 +1031,6 @@ def predictGBM(x_test_GBM, area_name, trait_name, objective, model_type):
     predicted_labels_test = model.predict(x_test_GBM)
     return predicted_labels_test, model
 
-predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', model_type='GBM')
-
 #####
 # *** F1 etc table
 
@@ -1066,8 +1057,6 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names):
     for idx, name in enumerate([class_names[idx] for idx in class_labels]):
         line_data = (name, f1_scores[idx] * 100, recall[idx] * 100, precision[idx] * 100)
         print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
-
-report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=['black', 'white'])
 
 #####
 # *** Confusion matrices
@@ -1112,6 +1101,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
                                trait_name,
                                class_names
                                ):
+    "&&&"
 
     mask = np.in1d(predicted_labels_test, y_test_GBM)
     predictions = predicted_labels_test[mask]
@@ -1142,11 +1132,6 @@ def show_std_T_confusionMatrix(predicted_labels_test,
 
     plt.tight_layout()
 
-show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
-                               y_test_GBM=y_test_GBM,
-                               trait_name='HEIGHT',
-                               class_names=['black', 'white']
-                               )
 #####
 # *** Class balance
 
@@ -1162,7 +1147,6 @@ def show_ClassBalance(y_train_GBM, class_names):
                fontsize=20)
     plt.yticks(fontsize=20);
 
-show_ClassBalance(y_train_GBM=y_train_GBM, class_names=['black', 'white'])
 #####
 # *** ROC and AUC
 
@@ -1201,10 +1185,34 @@ def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM):
     plt.legend(loc="center right", prop={"size": 15})
     plt.show()
 
-show_ROCAUC(model=model, class_names=['black', 'white'], y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
-
 #####
 # *** Feature importance
+
+def show_featureImportance(
+        model,
+        feature_names,
+        t_dim,
+        f_dim
+):
+    "&&&"
+    # Get feature importances and reshape them to dates and features
+    feature_importances = model.feature_importances_.reshape((t_dim, f_dim))
+
+    fig = plt.figure(figsize=(15, 15))
+    ax = plt.gca()
+
+    # Plot the importances
+    im = ax.imshow(feature_importances, aspect=0.5)
+    plt.xticks(range(len(feature_names)), feature_names, rotation=90, fontsize=20)
+    plt.yticks(range(t_dim), [f"T{i}" for i in range(t_dim)], fontsize=20)
+    plt.xlabel("Bands and band related features", fontsize=20)
+    plt.ylabel("Time frames", fontsize=20)
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position("top")
+
+    fig.subplots_adjust(wspace=0, hspace=0)
+    cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
+    cb.ax.tick_params(labelsize=20)
 
 #accumulated args
 print(x_train_GBM)
@@ -1225,42 +1233,27 @@ print(feature_names) # list of str names of features which were trained on
 print(t_dim) #time dimension count
 print(f_dim) # features dimension count
 
+# leave training where is
+# &&& collect experiment and validation commands to this point
 
-def show_featureImportance(
-        model,
-        feature_names,
-        t_dim,
-        f_dim
-):
-    ""
-    # Get feature importances and reshape them to dates and features
-    feature_importances = model.feature_importances_.reshape((t_dim, f_dim))
-
-    fig = plt.figure(figsize=(15, 15))
-    ax = plt.gca()
-
-    # Plot the importances
-    im = ax.imshow(feature_importances, aspect=0.5)
-    plt.xticks(range(len(feature_names)), feature_names, rotation=90, fontsize=20)
-    plt.yticks(range(t_dim), [f"T{i}" for i in range(t_dim)], fontsize=20)
-    plt.xlabel("Bands and band related features", fontsize=20)
-    plt.ylabel("Time frames", fontsize=20)
-    ax.xaxis.tick_top()
-    ax.xaxis.set_label_position("top")
-
-    fig.subplots_adjust(wspace=0, hspace=0)
-    cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
-    cb.ax.tick_params(labelsize=20)
-
+predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', model_type='GBM')
+report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=['black', 'white'])
+show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
+                               y_test_GBM=y_test_GBM,
+                               trait_name='HEIGHT',
+                               class_names=['black', 'white'])
+show_ClassBalance(y_train_GBM=y_train_GBM, class_names=['black', 'white'])
+show_ROCAUC(model=model, class_names=['black', 'white'], y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
 # get dims
 f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = 'HEIGHT')
 f.shape[0] #t_dim
 f.shape[-1] #f_dim
-
 # get feature names
 feature_names = [f"{i}_{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
-
 show_featureImportance(model=model, feature_names=feature_names, t_dim=10, f_dim=45)
+
+
+
 
 ######### ** Predict
 
@@ -1422,7 +1415,7 @@ plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', areas=area_grid(D
 # *** Visualize trait diff
 
 def plot_disagreement(areas, trait_name, inspect_ratio):
-    "&&&"
+    "plot ground truth, prediction, categorical and continuous agreement"
     #pick rndm patch
     idx = np.random.choice(range(len(areas)))
     eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, f"eopatch_{idx}"), lazy_loading=True)
@@ -1483,6 +1476,15 @@ plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspe
 
 #####
 # *** Quantify agreement
+&&& extract predictions from eopatches
+predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', model_type='GBM')
+
+report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=['black', 'white'])
+
+show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test, y_test_GBM=y_test_GBM, trait_name='HEIGHT', class_names=['black', 'white'])
+
+show_ROCAUC(model=model, class_names=['black', 'white'], y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
+
 ################
 # * TST experiment
 ################
@@ -1523,5 +1525,10 @@ len(splits[1]) # 337
 # *** Visualize trait diff
 #####
 # *** Quantify agreement
+
+######### ** Export to geotiff all for model comparison
+#####
+# *** &&&
+# &&& use mask to set noValue areas on exported data
 
 ############################################

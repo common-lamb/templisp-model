@@ -140,6 +140,7 @@ EOPATCH_TRAIN_DIR= os.path.join(DATA_OP_ROOT, "eopatches_train")
 EOPATCH_VALIDATE_DIR= os.path.join(DATA_OP_ROOT, "eopatches_validation")
 DATA_DIR= os.path.join(DATA_OP_ROOT, "data")
 EOPATCH_SAMPLES_DIR= os.path.join(DATA_OP_ROOT, "eopatches_sampled")
+MODELS_DIR= os.path.join(DATA_OP_ROOT, "models")
 RESULTS_DIR= os.path.join(DATA_OP_ROOT, "results")
 
 ######### ** Global variables
@@ -165,7 +166,7 @@ def dir_file_enforce():
         if not os.path.exists(f):
             raise FileNotFoundError(f"Input file not found: {f}")
     # make exist
-    for d in (DATA_OP_ROOT, EOPATCH_TRAIN_DIR, EOPATCH_VALIDATE_DIR, DATA_DIR, EOPATCH_SAMPLES_DIR, RESULTS_DIR):
+    for d in (DATA_OP_ROOT, EOPATCH_TRAIN_DIR, EOPATCH_VALIDATE_DIR, DATA_DIR, EOPATCH_SAMPLES_DIR, RESULTS_DIR, MODELS_DIR):
         os.makedirs(d, exist_ok=True)
 
 def parse_identifiers(path):
@@ -958,10 +959,10 @@ def split_reconfigure_for_GBM(split_data, show=False):
 # * GBM experiment
 ################
 
-def create_GBM_training_data(show=False):
+def create_GBM_training_data(trait_name, show=False):
     a = sampledData(areas=area_grid(DATA_train),
                     eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
-                    trait = 'HEIGHT')
+                    trait = trait_name)
     b = split_for_TSAI(a)
     c = split_reconfigure_for_GBM(b)
     if show:
@@ -973,8 +974,6 @@ def create_GBM_training_data(show=False):
         print(f"y_test: {y_test.shape}") # (337,)
     return c
 
-# &&& move to execution
-x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data()
 
 ######### ** Train
 
@@ -1001,13 +1000,14 @@ def trainGBM(objective,
     # Train the model
     model.fit(x_train_GBM, y_train_GBM)
     # Save the model
-    joblib.dump(model, os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
+    joblib.dump(model, os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
 
 
 def ask_trainGBM():
     print("train GBM model?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
+        x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name='HEIGHT')
         trainGBM(objective='multiclass',
                  area_name='test-area',
                  trait_name='HEIGHT',
@@ -1021,7 +1021,7 @@ ask_trainGBM()
 
 def loadModel(area_name, trait_name, objective, model_type):
     # Load the model
-    model_path = os.path.join(RESULTS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl")
+    model_path = os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl")
     model = joblib.load(model_path)
     return model
 
@@ -1069,7 +1069,7 @@ def plot_confusion_matrix(
     ylabel="True label",
     xlabel="Predicted label"):
     """
-    prints and plots the confusion matrix.
+    prints and plots one confusion matrix.
     Normalization can be applied by setting `normalize=True`.
     """
     if normalize:
@@ -1099,9 +1099,8 @@ def plot_confusion_matrix(
 def show_std_T_confusionMatrix(predicted_labels_test,
                                y_test_GBM,
                                trait_name,
-                               class_names
-                               ):
-    "&&&"
+                               class_names):
+    "plots standard and transposed confusion matrix"
 
     mask = np.in1d(predicted_labels_test, y_test_GBM)
     predictions = predicted_labels_test[mask]
@@ -1214,46 +1213,41 @@ def show_featureImportance(
     cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
     cb.ax.tick_params(labelsize=20)
 
-#accumulated args
-print(x_train_GBM)
-print(y_train_GBM)
-print(x_test_GBM)
-print(y_test_GBM)
-
-print(area_name) # str descibes area being studied eg 'test-area'
+def testset_predict_GBM(trait_name, area_name, objective, model_type, class_names):
+    """
 print(trait_name) # str identifies trait in patches eg 'HEIGHT'
+print(area_name) # str descibes area being studied eg 'test-area'
 print(objective) #training objective, one of 'multiclass'  'regression', 'lambdarank'
-
-print(model) # the trained model, loaded from disk
-print(predicted_labels_test) # result of predictions, counterpart to y_test
+print(model_type) #model type one of 'GBM', 'TSAI'
 
 print(class_names) # list of str names for classes which were predicted
-
-print(feature_names) # list of str names of features which were trained on
 print(t_dim) #time dimension count
 print(f_dim) # features dimension count
+    """
 
-# leave training where is
-# &&& collect experiment and validation commands to this point
+    # get dims
+    f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = trait_name)
+    t_dim = f.shape[0] #t_dim
+    f_dim = f.shape[-1] #f_dim
+    # get feature names
+    feature_names = [f"{i} s:{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
 
-predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', model_type='GBM')
-report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=['black', 'white'])
-show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
-                               y_test_GBM=y_test_GBM,
-                               trait_name='HEIGHT',
-                               class_names=['black', 'white'])
-show_ClassBalance(y_train_GBM=y_train_GBM, class_names=['black', 'white'])
-show_ROCAUC(model=model, class_names=['black', 'white'], y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
-# get dims
-f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = 'HEIGHT')
-f.shape[0] #t_dim
-f.shape[-1] #f_dim
-# get feature names
-feature_names = [f"{i}_{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
-show_featureImportance(model=model, feature_names=feature_names, t_dim=10, f_dim=45)
+    # get prediction data
+    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=trait_name)
+    predicted_labels_test, model=predictGBM(x_test_GBM=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
+    # quantify prediction
+    # &&& add identifiers to plots: model type, trait
+    report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names)
+    show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
+                                   y_test_GBM=y_test_GBM,
+                                   trait_name=trait_name,
+                                   class_names=class_names)
+    show_ClassBalance(y_train_GBM=y_train_GBM, class_names=class_names)
+    show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
+    show_featureImportance(model=model, feature_names=feature_names, t_dim=t_dim, f_dim=f_dim)
 
-
+testset_predict_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
 
 ######### ** Predict
 

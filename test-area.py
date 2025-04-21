@@ -1040,7 +1040,7 @@ def predictGBM(x_test_GBM, area_name, trait_name, objective, model_type):
 #####
 # *** F1 etc table
 
-def report_F1Table(y_test_GBM, predicted_labels_test, class_names):
+def report_F1Table(y_test_GBM, predicted_labels_test, class_names, model_type, trait_name, pred_type):
 
     class_labels_float = np.unique(y_test_GBM)
     class_labels = [int(x) for x in class_labels_float]
@@ -1059,20 +1059,26 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names):
     # Extract and display metrics
     accuracy = metrics.accuracy_score(true_labels, predictions)
     avg_f1_score = metrics.f1_score(true_labels, predictions, average="weighted")
-    print("Classification accuracy {:.1f}%".format(100 * accuracy))
-    print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
 
-    # the len of these are known to be == to len of classnames and classlabels
     f1_scores = metrics.f1_score(true_labels, predictions, labels=class_labels, average=None)
     recall = metrics.recall_score(true_labels, predictions, labels=class_labels, average=None)
     precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
 
+    print("")
+    print (f"Metrics for: model {model_type}, trait {trait_name}, prediction {pred_type}")
+    print("---------------------------------")
+    print("Classification accuracy {:.1f}%".format(100 * accuracy))
+    print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
+    print("---------------------------------")
+    print("")
     print("             Class              =  F1  | Recall | Precision")
     print("         --------------------------------------------------")
     for idx in range(len(class_labels)):
         name = str(class_names[idx])
         line_data = (name, f1_scores[idx] * 100, recall[idx] * 100, precision[idx] * 100)
         print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
+    print("         --------------------------------------------------")
+    print("")
 
 #####
 # *** Confusion matrices
@@ -1115,6 +1121,8 @@ def plot_confusion_matrix(
 def show_std_T_confusionMatrix(predicted_labels_test,
                                y_test_GBM,
                                trait_name,
+                               model_type,
+                               pred_type,
                                class_names):
     "plots standard and transposed confusion matrix"
 
@@ -1132,18 +1140,18 @@ def show_std_T_confusionMatrix(predicted_labels_test,
         metrics.confusion_matrix(true_labels, predictions),
         classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
         normalize=True,
-        ylabel="Truth",
-        xlabel="Predicted (GBM)",
-        title= f"Confusion matrix: {trait_name}")
+        ylabel="Ground Truth",
+        xlabel="Predicted",
+        title= f"Confusion matrix: model {model_type}, trait {trait_name}, prediction {pred_type}")
 
     plt.subplot(1, 2, 2)
     plot_confusion_matrix(
         metrics.confusion_matrix(predictions, true_labels),
         classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
         normalize=True,
-        xlabel="Truth",
-        ylabel="Predicted (GBM)",
-        title=f"Transposed Confusion matrix: {trait_name}")
+        xlabel="Ground Truth",
+        ylabel="Predicted",
+        title=f"Transposed Confusion matrix: model {model_type}, trait {trait_name}, prediction {pred_type}")
 
     plt.tight_layout()
 
@@ -1165,7 +1173,7 @@ def show_ClassBalance(y_train_GBM, class_names):
 #####
 # *** ROC and AUC
 
-def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM):
+def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM, model_type, trait_name, pred_type):
 
     class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
     labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
@@ -1196,19 +1204,14 @@ def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM):
     plt.ylabel("True Positive Rate", fontsize=20)
     plt.xticks(fontsize=20)
     plt.yticks(fontsize=20)
-    plt.title("ROC Curve", fontsize=20)
+    plt.title(f"ROC Curve: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
     plt.legend(loc="center right", prop={"size": 15})
     plt.show()
 
 #####
 # *** Feature importance
 
-def show_featureImportance(
-        model,
-        feature_names,
-        t_dim,
-        f_dim
-):
+def show_featureImportance(model, feature_names, t_dim, f_dim, model_type, trait_name, pred_type):
     "plots a heatmap of time and feature showing contribution of each to predictions"
     # Get feature importances and reshape them to dates and features
     feature_importances = model.feature_importances_.reshape((t_dim, f_dim))
@@ -1222,6 +1225,7 @@ def show_featureImportance(
     plt.yticks(range(t_dim), [f"T{i}" for i in range(t_dim)], fontsize=20)
     plt.xlabel("Bands and band related features", fontsize=20)
     plt.ylabel("Time frames", fontsize=20)
+    plt.title(f"Feature Importance: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
     ax.xaxis.tick_top()
     ax.xaxis.set_label_position("top")
 
@@ -1233,11 +1237,11 @@ def testset_predict_GBM(trait_name, area_name, objective, model_type, class_name
     """
     collects sampled data, predicts and then reports metrics
 
-trait_name: str identifies trait in patches eg 'HEIGHT'
-area_name: str descibes area being studied eg 'test-area'
-objective: training objective, one of 'multiclass'  'regression', 'lambdarank'
-model_type: model type one of 'GBM', 'TSAI'
-class_names: list of str names for classes which were predicted
+    trait_name: str identifies trait in patches eg 'HEIGHT'
+    area_name: str descibes area being studied eg 'test-area'
+    objective: training objective, one of 'multiclass'  'regression', 'lambdarank'
+    model_type: model type one of 'GBM', 'TSAI'
+    class_names: list of str names for classes which were predicted
     """
 
     # get dims
@@ -1252,15 +1256,38 @@ class_names: list of str names for classes which were predicted
     predicted_labels_test, model=predictGBM(x_test_GBM=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
     # quantify prediction
-    # &&& add identifiers to plots: model type, trait
-    report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names)
-    show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
-                                   y_test_GBM=y_test_GBM,
-                                   trait_name=trait_name,
-                                   class_names=class_names)
+    report_F1Table(
+        y_test_GBM=y_test_GBM,
+        predicted_labels_test=predicted_labels_test,
+        class_names=class_names,
+        model_type=model_type,
+        trait_name=trait_name,
+        pred_type=objective)
+    show_std_T_confusionMatrix(
+        predicted_labels_test=predicted_labels_test,
+        y_test_GBM=y_test_GBM,
+        trait_name=trait_name,
+        class_names=class_names,
+        model_type=model_type,
+        pred_type=objective)
     show_ClassBalance(y_train_GBM=y_train_GBM, class_names=class_names)
-    show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
-    show_featureImportance(model=model, feature_names=feature_names, t_dim=t_dim, f_dim=f_dim)
+    show_ROCAUC(
+        model=model,
+        class_names=class_names,
+        y_test_GBM=y_test_GBM,
+        y_train_GBM=y_train_GBM,
+        x_test_GBM=x_test_GBM,
+        model_type=model_type,
+        trait_name=trait_name,
+        pred_type=objective)
+    show_featureImportance(
+        model=model,
+        feature_names=feature_names,
+        t_dim=t_dim,
+        f_dim=f_dim,
+        model_type=model_type,
+        trait_name=trait_name,
+        pred_type=objective)
 
 testset_predict_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
 
@@ -1333,6 +1360,7 @@ def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objectiv
     concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "FEATURES_TRAINING"))
 
     # predict
+    # &&& add model to saving prediction layer in eopatch
     predict_task = PredictPatchTask(model=model,
                                     model_type=model_type,
                                     feature=(FeatureType.DATA, "FEATURES_TRAINING"),
@@ -1490,6 +1518,7 @@ def predictedData(areas, eopatch_samples_dir, trait, show=False):
     Takes grid of areas, a source of eopatches, and a single trait.
     Concatenates all then Returns features and trait and prediction
     """
+    # &&& add model to prediction layer retrieval
 
     sampled_eopatches = []
     for i in range(len(areas)):
@@ -1550,15 +1579,17 @@ class_names: list of str names for classes which were predicted
     x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name)
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
-    # &&& add identifiers to plots: model type, trait
+
+
     # quantify prediction
-    report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names)
+    report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names, model_type=model_type, trait_name=trait_name, pred_type=objective)
 
     show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
                                    y_test_GBM=y_test_GBM,
                                    trait_name=trait_name,
-                                   class_names=class_names)
-    # show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
+                                   class_names=class_names, model_type=model_type, pred_type=objective)
+
+    # show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM, model_type=model_type, trait_name=trait_name, pred_type=objective)
 
 validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
 

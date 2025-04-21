@@ -35,7 +35,7 @@
 # ** Reshape data
 # *** Split patches into train test for GBM
 # *** Shape for GBM
-# *** Split samples into train test for TST &&&
+# *** Split samples into train test for TST
 # *** Shape for TSP
 # * GBM experiment
 # ** Train
@@ -51,6 +51,7 @@
 # *** Visualize predicted trait
 # *** Visualize trait diff
 # *** Quantify agreement
+# &&& vvv
 # * TST experiment
 # ** Train
 # *** Unsupervised training
@@ -292,7 +293,6 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
     width_pix = int(width / resolution)
     height_pix = int(height / resolution)
     print(f"Dimension of the area is {width_pix} x {height_pix} pixels")
-    # &&& get the number of grid cells wide and tall our area is
     # get the width and height of the area in patches
     width_patch = int(round(width_pix / grid_size))
     height_patch =  int(round(height_pix / grid_size))
@@ -703,7 +703,7 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
            'SBLOTCH-LMH'],
           dtype='object')
 
-    which are valid for test area &&&
+    we know height is valid for test area
     '''
 
     rasterize_height_task = VectorToRasterTask(
@@ -711,7 +711,7 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
         (FeatureType.DATA_TIMELESS, "HEIGHT"), #name of rasterized new layer, DATA floats
         values_column="HEIGHT-CM", # col of merged_gdf.columns to rasterize
         raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
-        raster_dtype=np.float32, # &&& float
+        raster_dtype=np.float32, # float
     )
 
     # initialize tasks or copy
@@ -762,7 +762,6 @@ data_keys
 #####
 # *** RGB per time
 eopatch.plot((FeatureType.DATA, data_keys[-1]))
-#&&& make vis on load to check
 
 #####
 # *** Reference identities map
@@ -985,23 +984,30 @@ def trainGBM(objective,
              y_train_GBM,):
 
     learning_rate=0.1
-    # count training classes
+    # count training classes for classification arg
     n_labels_unique = len(np.unique(y_train))
+    # count predictions for ranking arg
+    group_all = [len(x_train_GBM)]
+
     # Set up the model
-    if objective is 'multiclass':
+    # metric options: https://lightgbm.readthedocs.io/en/stable/Parameters.html#metric
+    if objective == 'multiclass':
         model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
-    if objective is 'regression':
-        model = lgb.LGBMRegressor(objective=objective, metric="logloss",learning_rate=learning_rate, random_state=RNDM)
-        # &&&  metric etc
-    if objective is 'lambdarank':
+    if objective == 'regression':
+        model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
+    if objective == 'lambdarank':
         print("must set the group https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835")
-        model = lgb.LGBMRanker(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
+        model = lgb.LGBMRanker(objective=objective, group=group_all, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
+
+        # &&& test on regression
+        # &&& vis on regression
+        # &&& test on ranking
+        # &&& vis on ranking
 
     # Train the model
     model.fit(x_train_GBM, y_train_GBM)
     # Save the model
     joblib.dump(model, os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
-
 
 def ask_trainGBM():
     print("train GBM model?")
@@ -1203,7 +1209,7 @@ def show_featureImportance(
         t_dim,
         f_dim
 ):
-    "&&&"
+    "plots a heatmap of time and feature showing contribution of each to predictions"
     # Get feature importances and reshape them to dates and features
     feature_importances = model.feature_importances_.reshape((t_dim, f_dim))
 
@@ -1294,7 +1300,7 @@ class PredictPatchTask(EOTask):
         del fake_labels_back
 
 
-        if self.model_type is 'GBM':
+        if self.model_type == 'GBM':
             #do GBM shaped actions
             predicted_trait= self.model.predict(features_GBM)
 
@@ -1309,7 +1315,7 @@ class PredictPatchTask(EOTask):
                 eopatch[(FeatureType.DATA_TIMELESS, self.predicted_probas_name)] = predicted_scores
 
             return eopatch
-        elif self.model_type is 'TSAI':
+        elif self.model_type == 'TSAI':
             #do TSAI shaped actions
             print('&&&')
         else:
@@ -1504,8 +1510,7 @@ def predictedData(areas, eopatch_samples_dir, trait, show=False):
 
 def create_GBM_validation_data(trait_name, show=False):
     """
-    &&& extract predictions from eopatches
-    create_GBM_validation_data
+    extract a trait and its prediction from eopatches for metrics
     """
     features, labels, predicted_labels = predictedData(areas=area_grid(DATA_validate),
                       eopatch_samples_dir=EOPATCH_VALIDATE_DIR,

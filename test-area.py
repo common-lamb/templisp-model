@@ -1039,6 +1039,13 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names):
     class_labels_float = np.unique(y_test_GBM)
     class_labels = [int(x) for x in class_labels_float]
 
+    #handle unexpected class names
+    if len(class_names) != len(class_labels):
+        print("Alert: unexpected length of class labels. setting class names to be found values")
+        print(f"expected: n: {len(class_names)} class names: {class_names} ")
+        print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
+        class_names = class_labels
+
     mask = np.in1d(predicted_labels_test, y_test_GBM)
     predictions = predicted_labels_test[mask]
     true_labels = y_test_GBM[mask]
@@ -1049,12 +1056,15 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names):
     print("Classification accuracy {:.1f}%".format(100 * accuracy))
     print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
 
+    # the len of these are known to be == to len of classnames and classlabels
     f1_scores = metrics.f1_score(true_labels, predictions, labels=class_labels, average=None)
     recall = metrics.recall_score(true_labels, predictions, labels=class_labels, average=None)
     precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
+
     print("             Class              =  F1  | Recall | Precision")
     print("         --------------------------------------------------")
-    for idx, name in enumerate([class_names[idx] for idx in class_labels]):
+    for idx in range(len(class_labels)):
+        name = str(class_names[idx])
         line_data = (name, f1_scores[idx] * 100, recall[idx] * 100, precision[idx] * 100)
         print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
 
@@ -1215,14 +1225,13 @@ def show_featureImportance(
 
 def testset_predict_GBM(trait_name, area_name, objective, model_type, class_names):
     """
-print(trait_name) # str identifies trait in patches eg 'HEIGHT'
-print(area_name) # str descibes area being studied eg 'test-area'
-print(objective) #training objective, one of 'multiclass'  'regression', 'lambdarank'
-print(model_type) #model type one of 'GBM', 'TSAI'
+    collects sampled data, predicts and then reports metrics
 
-print(class_names) # list of str names for classes which were predicted
-print(t_dim) #time dimension count
-print(f_dim) # features dimension count
+trait_name: str identifies trait in patches eg 'HEIGHT'
+area_name: str descibes area being studied eg 'test-area'
+objective: training objective, one of 'multiclass'  'regression', 'lambdarank'
+model_type: model type one of 'GBM', 'TSAI'
+class_names: list of str names for classes which were predicted
     """
 
     # get dims
@@ -1470,14 +1479,83 @@ plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspe
 
 #####
 # *** Quantify agreement
-&&& extract predictions from eopatches
-predicted_labels_test, model = predictGBM(x_test_GBM=x_test_GBM, area_name = 'test-area', trait_name = 'HEIGHT', objective ='multiclass', model_type='GBM')
+def predictedData(areas, eopatch_samples_dir, trait, show=False):
+    """
+    Takes grid of areas, a source of eopatches, and a single trait.
+    Concatenates all then Returns features and trait and prediction
+    """
 
-report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=['black', 'white'])
+    sampled_eopatches = []
+    for i in range(len(areas)):
+        sample_path = os.path.join(eopatch_samples_dir, f"eopatch_{i}")
+        sampled_eopatches.append(EOPatch.load(sample_path, lazy_loading=True))
 
-show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test, y_test_GBM=y_test_GBM, trait_name='HEIGHT', class_names=['black', 'white'])
+    features = np.concatenate([eopatch.data["FEATURES_TRAINING"] for eopatch in sampled_eopatches], axis=1)
+    labels = np.concatenate([eopatch.data_timeless[f"{trait}"] for eopatch in sampled_eopatches], axis=0)
+    predicted_labels = np.concatenate([eopatch.data_timeless[f"PREDICTED_{trait}"] for eopatch in sampled_eopatches], axis=0)
 
-show_ROCAUC(model=model, class_names=['black', 'white'], y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
+    if show:
+        print("predicted data:")
+        print(f"features.shape: {features.shape}")
+        print(f"labels.shape: {labels.shape}")
+        print(f"predicted labels.shape: {predicted_labels.shape}")
+
+    return features, labels, predicted_labels
+
+def create_GBM_validation_data(trait_name, show=False):
+    """
+    &&& extract predictions from eopatches
+    create_GBM_validation_data
+    """
+    features, labels, predicted_labels = predictedData(areas=area_grid(DATA_validate),
+                      eopatch_samples_dir=EOPATCH_VALIDATE_DIR,
+                      trait = trait_name)
+    #make and reshape two sets so labels and predictions get equivalent treatment
+    fl = features, labels
+    fp = features, predicted_labels
+    fl_reshaped = reshape_to_GBM(data=fl, TSAI_shape=False)
+    fp_reshaped = reshape_to_GBM(data=fp, TSAI_shape=False)
+    f_reshaped, l_reshaped = fl_reshaped
+    f_reshaped, p_reshaped = fp_reshaped
+    #there is no test,train split in validation data so repeat f,l in both x,y positions
+    data = f_reshaped, l_reshaped, f_reshaped, l_reshaped, p_reshaped
+
+    if show:
+        x_train, y_train, x_test, y_test, y_pred = data
+        print("GBM validation data")
+        print(f"x_train: {x_train.shape}")
+        print(f"y_train: {y_train.shape}")
+        print(f"x_test: {x_test.shape}")
+        print(f"y_test: {y_test.shape}")
+        print(f"y_pred: {y_pred.shape}")
+    return data
+
+def validationset_metrics_GBM(trait_name, area_name, objective, model_type, class_names):
+    """
+    collects predicted data,  reports metrics
+
+trait_name: str identifies trait in patches eg 'HEIGHT'
+area_name: str descibes area being studied eg 'test-area'
+objective: training objective, one of 'multiclass'  'regression', 'lambdarank'
+model_type: model type one of 'GBM', 'TSAI'
+class_names: list of str names for classes which were predicted
+    """
+
+    # get prediction data
+    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name)
+    model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+
+    # &&& add identifiers to plots: model type, trait
+    # quantify prediction
+    report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names)
+
+    show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
+                                   y_test_GBM=y_test_GBM,
+                                   trait_name=trait_name,
+                                   class_names=class_names)
+    # show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM)
+
+validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
 
 ################
 # * TST experiment

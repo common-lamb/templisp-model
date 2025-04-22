@@ -288,15 +288,12 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
     # get the width and height of the area in meters
     width = extent_shape.bounds[2] - extent_shape.bounds[0]
     height = extent_shape.bounds[3] - extent_shape.bounds[1]
-    print(f"Dimension of the area is: {width:.0f} x {height:.0f} m")
     # get the width and height of the area in pixels
     width_pix = int(width / resolution)
     height_pix = int(height / resolution)
-    print(f"Dimension of the area is {width_pix} x {height_pix} pixels")
     # get the width and height of the area in patches
     width_patch = int(round(width_pix / grid_size))
     height_patch =  int(round(height_pix / grid_size))
-    print(f"Dimension of the area is {width_patch} x {height_patch} patches (rounded to nearest full patch)")
     # length of patch edge m=(m/px)*px
     edge_m =resolution*grid_size
 
@@ -318,8 +315,11 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
         patch_ids.append(idx)
 
     if show:
+        # report on dimensions
+        print(f"Dimension of the area is: {width:.0f} x {height:.0f} m")
+        print(f"Dimension of the area is {width_pix} x {height_pix} pixels")
+        print(f"Dimension of the area is {width_patch} x {height_patch} patches (rounded to nearest full patch)")
         # Plot the polygon and its partitions
-
         plt.ion()
         fig, ax = plt.subplots(figsize=(30, 30))
         ax.set_title(f"Area: {area}, partitioned to patches", fontsize=25)
@@ -973,7 +973,6 @@ def create_GBM_training_data(trait_name, show=False):
         print(f"y_test: {y_test.shape}") # (337,)
     return c
 
-
 ######### ** Train
 
 def trainGBM(objective,
@@ -1360,12 +1359,11 @@ def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objectiv
     concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "FEATURES_TRAINING"))
 
     # predict
-    # &&& add model to saving prediction layer in eopatch
     predict_task = PredictPatchTask(model=model,
                                     model_type=model_type,
                                     feature=(FeatureType.DATA, "FEATURES_TRAINING"),
-                                    predicted_trait_name=f"PREDICTED_{trait_name}",
-                                    predicted_probas_name=f"PREDICTED_{trait_name}_PROBA")
+                                    predicted_trait_name=f"PREDICTED_{trait_name}_{model_type}",
+                                    predicted_probas_name=f"PREDICTED_{trait_name}_{model_type}_PROBA")
 
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
@@ -1405,8 +1403,8 @@ ask_PredictPatches()
 
 eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 eopatch
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT'))
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_PROBA'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_GBM'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_GBM_PROBA'))
 
 ######### ** Quantify prediction
 #####
@@ -1426,7 +1424,7 @@ def cartesian_from_position(position, grid_h, grid_w):
     col = position // grid_h # int div of height gives col
     return row, col
 
-def plot_prediction(grid_h, grid_w, trait_name, areas):
+def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, pred_type):
     ""
     fig, axs = plt.subplots(nrows=grid_h+1, ncols=grid_w+1, figsize=(20, 25))
     for i in tqdm(range(len(areas))):
@@ -1434,7 +1432,7 @@ def plot_prediction(grid_h, grid_w, trait_name, areas):
         eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
         row, col = cartesian_from_position(i, grid_h, grid_w)
         ax = axs[row][col]
-        im = ax.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze())
+        im = ax.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze())
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_aspect("auto")
@@ -1444,14 +1442,15 @@ def plot_prediction(grid_h, grid_w, trait_name, areas):
 
     cb = fig.colorbar(im, ax=axs.ravel().tolist(), orientation="horizontal", pad=0.01, aspect=100)
     cb.ax.tick_params(labelsize=20)
+    plt.title(f"Prediction: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
     plt.show()
 
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', areas=area_grid(DATA_validate))
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', pred_type='categorical', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
 
-def plot_disagreement(areas, trait_name, inspect_ratio):
+def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     "plot ground truth, prediction, categorical and continuous agreement"
     #pick rndm patch
     idx = np.random.choice(range(len(areas)))
@@ -1468,6 +1467,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio):
 
     # Draw the Reference map
     fig = plt.figure(figsize=(20, 20))
+    fig.suptitle(f"Model: {model_type}, Trait: {trait_name}, Prediction: {pred_type}", fontsize=24)
 
     ax = plt.subplot(2, 2, 1)
     plt.imshow(eopatch.data_timeless[trait_name].squeeze()[w_min:w_max, h_min:h_max])
@@ -1478,7 +1478,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio):
     plt.title(f"Ground Truth: {trait_name}", fontsize=20)
 
     ax = plt.subplot(2, 2, 2)
-    plt.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze()[w_min:w_max, h_min:h_max])
+    plt.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze()[w_min:w_max, h_min:h_max])
     plt.colorbar(label=f"{trait_name}")
     plt.xticks([])
     plt.yticks([])
@@ -1486,7 +1486,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio):
     plt.title("Prediction", fontsize=20)
 
     ax = plt.subplot(2, 2, 3)
-    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze() != eopatch.data_timeless[trait_name].squeeze()
+    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze() != eopatch.data_timeless[trait_name].squeeze()
     plt.imshow(mask[w_min:w_max, h_min:h_max], cmap="gray")
     cbar = plt.colorbar(label="Disagreement")
     cbar.set_ticks([0, 1])
@@ -1497,7 +1497,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio):
     plt.title("Disagreement", fontsize=20)
 
     ax = plt.subplot(2, 2, 4)
-    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}"].squeeze() - eopatch.data_timeless[trait_name].squeeze()
+    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze() - eopatch.data_timeless[trait_name].squeeze()
     vmax = max(abs(mask.min()), abs(mask.max()))
     norm = colors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
     plt.imshow(mask[w_min:w_max, h_min:h_max], cmap="seismic", norm=norm)
@@ -1508,17 +1508,17 @@ def plot_disagreement(areas, trait_name, inspect_ratio):
     plt.title("Difference", fontsize=20)
 
     fig.subplots_adjust(wspace=0.1, hspace=0.1)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99)
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', pred_type="categorical")
 
 #####
 # *** Quantify agreement
-def predictedData(areas, eopatch_samples_dir, trait, show=False):
+def predictedData(areas, eopatch_samples_dir, trait_name, model_type, show=False):
     """
     Takes grid of areas, a source of eopatches, and a single trait.
     Concatenates all then Returns features and trait and prediction
     """
-    # &&& add model to prediction layer retrieval
 
     sampled_eopatches = []
     for i in range(len(areas)):
@@ -1526,8 +1526,8 @@ def predictedData(areas, eopatch_samples_dir, trait, show=False):
         sampled_eopatches.append(EOPatch.load(sample_path, lazy_loading=True))
 
     features = np.concatenate([eopatch.data["FEATURES_TRAINING"] for eopatch in sampled_eopatches], axis=1)
-    labels = np.concatenate([eopatch.data_timeless[f"{trait}"] for eopatch in sampled_eopatches], axis=0)
-    predicted_labels = np.concatenate([eopatch.data_timeless[f"PREDICTED_{trait}"] for eopatch in sampled_eopatches], axis=0)
+    labels = np.concatenate([eopatch.data_timeless[f"{trait_name}"] for eopatch in sampled_eopatches], axis=0)
+    predicted_labels = np.concatenate([eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"] for eopatch in sampled_eopatches], axis=0)
 
     if show:
         print("predicted data:")
@@ -1537,13 +1537,15 @@ def predictedData(areas, eopatch_samples_dir, trait, show=False):
 
     return features, labels, predicted_labels
 
-def create_GBM_validation_data(trait_name, show=False):
+def create_GBM_validation_data(trait_name, model_type, show=False):
     """
     extract a trait and its prediction from eopatches for metrics
     """
-    features, labels, predicted_labels = predictedData(areas=area_grid(DATA_validate),
-                      eopatch_samples_dir=EOPATCH_VALIDATE_DIR,
-                      trait = trait_name)
+    features, labels, predicted_labels = predictedData(
+        areas=area_grid(DATA_validate),
+        eopatch_samples_dir=EOPATCH_VALIDATE_DIR,
+        model_type=model_type,
+        trait_name=trait_name)
     #make and reshape two sets so labels and predictions get equivalent treatment
     fl = features, labels
     fp = features, predicted_labels
@@ -1576,7 +1578,7 @@ class_names: list of str names for classes which were predicted
     """
 
     # get prediction data
-    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name)
+    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name, model_type)
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
 

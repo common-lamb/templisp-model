@@ -795,7 +795,7 @@ def CreatePatchPrepWorkflow(areas, eopatch_dir, eopatch_out_dir, trait, sample_r
                                          fraction=sample_rate,
                                          exclude_values=[0])
 
-    save_task = SaveTask(eopatch_out_dir, overwrite_permission=OverwritePermission.OVERWRITE_PATCH)
+    save_task = SaveTask(eopatch_out_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
     # node list
     workflow_nodes = linearly_connect_tasks(load_task, concatenate_task, erosion_task, sampling_task, save_task)
@@ -984,7 +984,7 @@ def trainGBM(objective,
 
     learning_rate=0.1
     # count training classes for classification arg
-    n_labels_unique = len(np.unique(y_train))
+    n_labels_unique = len(np.unique(y_train_GBM))
     # count predictions for ranking arg
     group_all = [len(x_train_GBM)]
 
@@ -992,19 +992,17 @@ def trainGBM(objective,
     # metric options: https://lightgbm.readthedocs.io/en/stable/Parameters.html#metric
     if objective == 'multiclass':
         model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
+        model.fit(x_train_GBM, y_train_GBM)
     if objective == 'regression':
         model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
+        model.fit(x_train_GBM, y_train_GBM)
     if objective == 'lambdarank':
-        print("must set the group https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835")
-        model = lgb.LGBMRanker(objective=objective, group=group_all, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
-
-        # &&& test on regression
-        # &&& vis on regression
-        # &&& test on ranking
-        # &&& vis on ranking
+        model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
+        # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
+        model.fit(x_train_GBM, y_train_GBM, group=group_all)
+        # &&& retry on ranked data
 
     # Train the model
-    model.fit(x_train_GBM, y_train_GBM)
     # Save the model
     joblib.dump(model, os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
 
@@ -1013,7 +1011,7 @@ def ask_trainGBM():
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name='HEIGHT')
-        trainGBM(objective='multiclass',
+        trainGBM(objective='lambdarank',
                  area_name='test-area',
                  trait_name='HEIGHT',
                  model_type='GBM',
@@ -1021,6 +1019,11 @@ def ask_trainGBM():
                  y_train_GBM=y_train_GBM,)
 
 ask_trainGBM()
+
+# &&& test on regression
+# &&& vis on regression
+# &&& test on ranking
+# &&& vis on ranking
 
 ######### ** Validate
 

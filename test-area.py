@@ -69,15 +69,12 @@
 # *** Visualize trait diff
 # *** Quantify agreement
 
-
-
 ################
 # * Setup
 ################
 
 ######### ** Import
 import os
-import sys
 import pathlib
 import glob
 import re
@@ -99,10 +96,11 @@ from shapely.geometry import Polygon
 from sentinelhub import DataCollection, UtmZoneSplitter
 
 import lightgbm as lgb
+import sklearn.metrics as skm
+from sklearn import preprocessing
 from tsai.all import *
-from sklearn import metrics, preprocessing
 
-from eolearn.core.core_tasks import CreateEOPatchTask, InitializeFeatureTask, RemoveFeatureTask
+from eolearn.core.core_tasks import CreateEOPatchTask, RemoveFeatureTask
 from eolearn.core import (EOExecutor,
                           EOPatch,
                           EOTask,
@@ -113,12 +111,11 @@ from eolearn.core import (EOExecutor,
                           OverwritePermission,
                           SaveTask,
                           linearly_connect_tasks,)
+from eolearn.core.eonode import EONode # good
+from eolearn.ml_tools import FractionSamplingTask
 from eolearn.io import ImportFromTiffTask, ExportToTiffTask, VectorImportTask
-from eolearn.core.eonode import EONode
-from eolearn.features import NormalizedDifferenceIndexTask, SimpleFilterTask
 from eolearn.features.extra.interpolation import LinearInterpolationTask
 from eolearn.geometry import ErosionTask, VectorToRasterTask
-from eolearn.ml_tools import FractionSamplingTask
 
 ######### ** Path and file selection
 # input data
@@ -154,7 +151,7 @@ EXPECTED_N_TIFS = 630
 EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
 USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
-SAMPLE_RATE = 0.01 # percentage of eopatches sampled for training. in (0.0-1.0)
+SAMPLE_RATE = 0.10 # percentage of eopatches sampled for training. in (0.0-1.0)
 TEST_PERCENTAGE = 0.20 # perventage of test-train set to use for testing. in (0.0-1.0)
 
 ######### ** Input validation
@@ -774,8 +771,12 @@ eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT'))
 # * Prepare eopatch
 ################
 
-def CreatePatchPrepWorkflow(areas, eopatch_dir, eopatch_out_dir, trait, sample_rate=SAMPLE_RATE):
+def CreatePatchPrepWorkflow(areas, eopatch_dir, eopatch_out_dir, trait, sample_rate=None):
     "Creates a workflow to finalize and sample eopatches. "
+
+    #use current global
+    if sample_rate is None:
+        sample_rate = SAMPLE_RATE
 
     eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
     data_keys = sorted(list(eopatch.data.keys()))
@@ -996,7 +997,7 @@ def trainGBM(objective,
     if objective == 'regression':
         model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
         model.fit(x_train_GBM, y_train_GBM)
-    if objective == 'lambdarank':
+    if objective == 'ranking':
         model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
         # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
         model.fit(x_train_GBM, y_train_GBM, group=group_all)
@@ -1011,7 +1012,7 @@ def ask_trainGBM():
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name='HEIGHT')
-        trainGBM(objective='lambdarank',
+        trainGBM(objective='multiclass',
                  area_name='test-area',
                  trait_name='HEIGHT',
                  model_type='GBM',
@@ -1241,7 +1242,7 @@ def testset_predict_GBM(trait_name, area_name, objective, model_type, class_name
 
     trait_name: str identifies trait in patches eg 'HEIGHT'
     area_name: str descibes area being studied eg 'test-area'
-    objective: training objective, one of 'multiclass'  'regression', 'lambdarank'
+    objective: training objective, one of 'multiclass'  'regression', 'ranking'
     model_type: model type one of 'GBM', 'TSAI'
     class_names: list of str names for classes which were predicted
     """
@@ -1575,7 +1576,7 @@ def validationset_metrics_GBM(trait_name, area_name, objective, model_type, clas
 
 trait_name: str identifies trait in patches eg 'HEIGHT'
 area_name: str descibes area being studied eg 'test-area'
-objective: training objective, one of 'multiclass'  'regression', 'lambdarank'
+objective: training objective, one of 'multiclass'  'regression', 'ranking'
 model_type: model type one of 'GBM', 'TSAI'
 class_names: list of str names for classes which were predicted
     """
@@ -1601,22 +1602,136 @@ validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective=
 ################
 # * TST experiment
 ################
-def create_TSAI_training_data():
+def create_TSAI_training_data(trait_name, show=False):
     a = sampledData(areas=area_grid(DATA_train),
                     eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
-                    trait = 'HEIGHT')
-    return split_for_TSAI(a)
+                    trait = trait_name)
+    b = split_for_TSAI(a)
+    if show:
+        x, y, splits = b
+        print("TSAI training data")
+        print(f"x: {x.shape}")
+        print(f"y: {y.shape}")
+        print(f"splits train: {len(splits[0])}")
+        print(f"splits test: {len(splits[1])}")
+    return b
 
-x_TSAI, y_TSAI, splits = create_TSAI_training_data()
-x_TSAI.shape # (1686, 45, 10)
-y_TSAI.shape # (1686,)
-len(splits[0]) # 1349
-len(splits[1]) # 337
+# test = create_TSAI_training_data(trait_name='HEIGHT', show=True)
+
 ######### ** Train
+
+X, y, splits = create_TSAI_training_data(trait_name='HEIGHT')
+plt.plot(X[13].T) # &&& what meaning
+
+#prepare dataset
+batch_size = 256
+batch_size = 512
+batch_size = 1024
+
+n_epochs = 150
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if not torch.cuda.is_available():
+    print("WARNING: device is cpu!")
+
+tfms  = [None, [Categorize()]] #fastai transformation
+dsets = TSDatasets(X, y, tfms=tfms, splits=splits, inplace=True)
+# &&& fastai make gpu available
+dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, bs=batch_size, batch_tmfs=TSStandardize(by_var=True), device=device, num_workers=0) # &&& select batch_tfms from docs
+
+# visualize data
+dls.show_batch(sharey=True) # &&& what meaning
+
+# build learner
+model = TST(dls.vars, dls.c, dls.len) #optional args: dropout=.3, fc_dropout=.8
+learn = Learner(dls, model,loss_func=LabelSmoothingCrossEntropyFlat(), metrics=[accuracy]) # &&& other metrics, aucroc&&&
+lr = learn.lr_find() #suggestion varies even on same dataset
+learning_rate = lr[0]
+learning_rate
+
+# train
+learn.fit_one_cycle(n_epochs, lr_max=learning_rate) # &&& args
+learn.plot_metrics()
+
+
+
+# save
+identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
+identifier = "temp"
+learn.save(os.path.join(MODELS_DIR, f"{identifier}_save")) # appends .pth
+learn.save_all(path=os.path.join(MODELS_DIR, f"{identifier}_saveAll"), dls_fname='dls', model_fname='model', learner_fname='learner')
+
+# load
+identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
+identifier = "temp"
+learn = load_learner_all(path=os.path.join(MODELS_DIR, f"{identifier}_saveAll"), dls_fname='dls', model_fname='model', learner_fname='learner')
+
+# get preds and probas after load_learner_all
+dls = learn.dls
+valid_dl = dls.valid
+valid_probas, valid_targets, valid_preds = learn.get_preds(dl=valid_dl, with_decoded=True)
+
+# visualize results
+learn.show_results()
+learn.show_probas()
+interp = ClassificationInterpretation.from_learner(learn)
+interp.plot_confusion_matrix()
+
+# get preds and probas with new data
+test_ds = valid_dl.dataset.add_test(X, y)
+test_dl = valid_dl.new(test_ds)
+test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True, save_preds=None, save_targs=None)
+print(f'accuracy: {skm.accuracy_score(test_targets, test_preds):10.6f}')
+
+
+
 #####
 # *** Unsupervised training
-#####
-# *** Transfer learning
+def trainTSAI(objective,
+             area_name,
+             trait_name,
+             model_type,
+             x_train_GBM,
+             y_train_GBM,):
+    "&&&"
+
+    learning_rate=0.1
+    # count training classes for classification arg
+    n_labels_unique = len(np.unique(y_train_GBM))
+    # count predictions for ranking arg
+    group_all = [len(x_train_GBM)]
+
+    # Set up the model
+    # metric options: https://lightgbm.readthedocs.io/en/stable/Parameters.html#metric
+    if objective == 'multiclass':
+        model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
+        model.fit(x_train_GBM, y_train_GBM)
+    if objective == 'regression':
+        model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
+        model.fit(x_train_GBM, y_train_GBM)
+    if objective == 'ranking':
+        model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
+        # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
+        model.fit(x_train_GBM, y_train_GBM, group=group_all)
+        # &&& retry on ranked data
+
+    # Train the model
+    # Save the model
+    joblib.dump(model, os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
+
+def ask_trainTSAI():
+    print("train TSAI model?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_TSAI_training_data(trait_name='HEIGHT')
+        trainTSAI(objective='multiclass',
+                 area_name='test-area',
+                 trait_name='HEIGHT',
+                 model_type='GBM',
+                 x_train_GBM=x_train_GBM,
+                 y_train_GBM=y_train_GBM,)
+
+ask_trainTSAI()
+
 ######### ** Validate
 #####
 # *** F1 etc table
@@ -1645,3 +1760,146 @@ len(splits[1]) # 337
 # &&& use mask to set noValue areas on exported data
 
 ############################################
+
+'''
+
+torch.cuda.is_available()
+returns false.
+
+Walk me through a diagnostic process
+include commands
+
+
+
+To diagnose why `torch.cuda.is_available()` is returning False, follow these steps:
+
+1. Check CUDA installation:
+   ```
+   nvidia-smi
+   ```
+   This should display GPU information. If not, CUDA might not be installed.
+
+DONE
+$ nvidia-smi
+Wed Apr 30 14:12:09 2025
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.67                 Driver Version: 550.67         CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060        Off |   00000000:03:00.0  On |                  N/A |
+|  0%   42C    P8             12W /  170W |    1149MiB /  12288MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A      4205      G   /usr/lib/xorg/Xorg                            941MiB |
+|    0   N/A  N/A      4334      G   /usr/bin/gnome-shell                           61MiB |
+|    0   N/A  N/A      6275      G   ...apHandler --variations-seed-version        134MiB |
++-----------------------------------------------------------------------------------------+
+
+2. Verify PyTorch installation:
+   ```python
+   import torch
+   print(torch.__version__)
+   ```
+   Ensure you have a CUDA-compatible version.
+
+DONE
+2.0.0.post2
+
+3. Check CUDA version:
+   ```
+   nvcc --version
+   ```
+   Compare with PyTorch's CUDA version.
+DONE
+(model) nvcc --version
+Command 'nvcc' not found, but can be installed with:
+sudo apt install nvidia-cuda-toolkit
+
+4. Examine system PATH:
+   ```
+   echo $PATH
+   ```
+   Ensure CUDA directories are included.
+
+5. Check PyTorch CUDA compilation:
+   ```python
+   import torch
+   print(torch.version.cuda)
+   ```
+   If None, PyTorch wasn't built with CUDA support.
+
+DONE
+None
+
+6. Verify GPU drivers:
+   ```
+   nvidia-smi
+   ```
+   Check driver version and compare with CUDA requirements.
+
+7. Test CUDA toolkit:
+   ```
+   cuda-memcheck --version
+   ```
+   If not found, CUDA toolkit might be missing.
+
+DONE
+(model) cuda-memcheck --version
+Command 'cuda-memcheck' not found, but can be installed with:
+sudo apt install nvidia-cuda-toolkit
+
+8. Check for conflicts:
+   Ensure no other GPU processes are running.
+
+9. Reinstall PyTorch:
+   If issues persist, try reinstalling with CUDA support.
+
+----------------------------------------------------------------
+Check my feedback and suggest a fix. I am using conda.
+
+
+Based on your feedback, it appears that you have a CUDA-capable GPU (NVIDIA GeForce RTX 3060) and the NVIDIA drivers are installed correctly. However, there are a few issues:
+
+1. CUDA toolkit is not installed or not in your PATH (nvcc and cuda-memcheck are not found).
+2. PyTorch is installed (version 2.0.0.post2), but it's not built with CUDA support (torch.version.cuda is None).
+
+To fix this, I suggest the following steps:
+
+1. Install CUDA toolkit using conda:
+   ```
+   conda install -c nvidia cuda-toolkit
+   ```
+
+2. Reinstall PyTorch with CUDA support. First, remove the existing PyTorch:
+   ```
+   conda uninstall pytorch
+   ```
+
+   Then, install PyTorch with CUDA support. Visit https://pytorch.org/get-started/locally/ and select your preferences. For example, for CUDA 11.8:
+   ```
+   conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+   ```
+
+3. After installation, activate your conda environment and verify:
+   ```python
+   import torch
+   print(torch.__version__)
+   print(torch.version.cuda)
+   print(torch.cuda.is_available())
+
+   ```
+
+This should install PyTorch with CUDA support and make `torch.cuda.is_available()` return True. If issues persist, ensure your conda environment is activated when running Python, and consider creating a new conda environment for a clean installation.
+
+Also installed ipykernel with conda
+
+'''

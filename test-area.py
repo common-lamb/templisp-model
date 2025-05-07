@@ -54,8 +54,7 @@
 # &&& vvv
 # * TST experiment
 # ** Train
-# *** Unsupervised training
-# *** Transfer learning
+# *** Supervised training
 # ** Validate
 # *** F1 etc table
 # *** Confusion matrices
@@ -1620,61 +1619,104 @@ def create_TSAI_training_data(trait_name, show=False):
 
 ######### ** Train
 
-X, y, splits = create_TSAI_training_data(trait_name='HEIGHT')
-plt.plot(X[13].T) # &&& what meaning
+#####
+# *** Supervised training
+def trainTSAI(objective,
+              area_name,
+              trait_name,
+              model_type,
+              x_train_TSAI,
+              y_train_TSAI,
+              splits,
+              show = False
+              ):
+    "&&&"
 
-#prepare dataset
-batch_size = 256
-batch_size = 512
-batch_size = 1024
+    # shared setup
+    batch_size = 8192 # print(math.pow(2,13))
+    n_epochs = 300
+    arch = TST
+    batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
+    inplace = False #true, transformation of training data, faster if it fits in mem
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        print("WARNING: device is cpu!")
+    seed = RNDM
 
-n_epochs = 150
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if not torch.cuda.is_available():
-    print("WARNING: device is cpu!")
+    # Set up the model and learner
+    if objective == 'multiclass':
+        tfms  = [None, [Categorize()]]
+        loss_func = LabelSmoothingCrossEntropyFlat() # &&& choose loss
+        metrics = [accuracy]
 
-tfms  = [None, [Categorize()]] #fastai transformation
-dsets = TSDatasets(X, y, tfms=tfms, splits=splits, inplace=True)
-# &&& fastai make gpu available
-dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, bs=batch_size, batch_tmfs=TSStandardize(by_var=True), device=device, num_workers=0) # &&& select batch_tfms from docs
+        # build unsupervised learner
+        learn = TSClassifier(x_train_TSAI, y=y_train_TSAI, splits=splits,
+                             tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
+                             arch=arch, loss_func=loss_func, metrics=metrics,
+                             arch_config=dict(dropout=0.3, fc_dropout=0.5), # TST args: dropout=.3, fc_dropout=.5
+                             inplace=inplace, device=device, seed=seed)
+    elif objective == 'regression':
+        tfms  = [None, [TSRegression()]]
+        metrics = [mae, rmse]
+        loss_func = MSELossFlat() # &&& choose loss
 
-# visualize data
-dls.show_batch(sharey=True) # &&& what meaning
+        learn = TSRegressor(x_train_TSAI, y=y_train_TSAI, splits=splits,
+                             tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
+                             arch=arch, loss_func=loss_func, metrics=metrics,
+                             arch_config=dict(dropout=0.3, fc_dropout=0.5), # TST args: dropout=.3, fc_dropout=.5
+                             inplace=inplace, device=device, seed=seed)
+    else:
+        raise ValueError(f"The provided objective ({objective}) is not recognized")
 
-# build learner
-model = TST(dls.vars, dls.c, dls.len) #optional args: dropout=.3, fc_dropout=.8
-learn = Learner(dls, model,loss_func=LabelSmoothingCrossEntropyFlat(), metrics=[accuracy]) # &&& other metrics, aucroc&&&
-lr = learn.lr_find() #suggestion varies even on same dataset
-learning_rate = lr[0]
-learning_rate
+    # Train the model
+    plt.ioff() # turn off the plot of learning rate
+    lr = learn.lr_find()
+    plt.ion()
+    learning_rate = lr[0]
+    print(f"Optimal Learning Rate: {learning_rate}")
+    learning_rate = lr[0]
+    learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
+    learn.plot_metrics()
 
-# train
-learn.fit_one_cycle(n_epochs, lr_max=learning_rate) # &&& args
-learn.plot_metrics()
+    if show:
+        # visualize results
+        learn.show_results()
+        learn.show_probas()
+        interp = ClassificationInterpretation.from_learner(learn)
+        interp.plot_confusion_matrix()
+
+    # Save the model
+    identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
+    learn.export(os.path.join(MODELS_DIR, f"{identifier}.pkl"))
+
+def ask_trainTSAI():
+    print("train TSAI model?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
+        trainTSAI(objective='regression',
+                 area_name='test-area',
+                 trait_name='HEIGHT',
+                 model_type='TSAI',
+                 x_train_TSAI=x_train_TSAI,
+                 y_train_TSAI=y_train_TSAI,
+                 splits = splits)
+
+ask_trainTSAI()
 
 
 
-# save
-identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
-identifier = "temp"
-learn.save(os.path.join(MODELS_DIR, f"{identifier}_save")) # appends .pth
-learn.save_all(path=os.path.join(MODELS_DIR, f"{identifier}_saveAll"), dls_fname='dls', model_fname='model', learner_fname='learner')
+
+
 
 # load
 identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
-identifier = "temp"
-learn = load_learner_all(path=os.path.join(MODELS_DIR, f"{identifier}_saveAll"), dls_fname='dls', model_fname='model', learner_fname='learner')
+learn = load_learner(os.path.join(MODELS_DIR, f"{identifier}"), cpu=False)
 
 # get preds and probas after load_learner_all
 dls = learn.dls
 valid_dl = dls.valid
 valid_probas, valid_targets, valid_preds = learn.get_preds(dl=valid_dl, with_decoded=True)
-
-# visualize results
-learn.show_results()
-learn.show_probas()
-interp = ClassificationInterpretation.from_learner(learn)
-interp.plot_confusion_matrix()
 
 # get preds and probas with new data
 test_ds = valid_dl.dataset.add_test(X, y)
@@ -1684,53 +1726,9 @@ print(f'accuracy: {skm.accuracy_score(test_targets, test_preds):10.6f}')
 
 
 
-#####
-# *** Unsupervised training
-def trainTSAI(objective,
-             area_name,
-             trait_name,
-             model_type,
-             x_train_GBM,
-             y_train_GBM,):
-    "&&&"
 
-    learning_rate=0.1
-    # count training classes for classification arg
-    n_labels_unique = len(np.unique(y_train_GBM))
-    # count predictions for ranking arg
-    group_all = [len(x_train_GBM)]
 
-    # Set up the model
-    # metric options: https://lightgbm.readthedocs.io/en/stable/Parameters.html#metric
-    if objective == 'multiclass':
-        model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
-        model.fit(x_train_GBM, y_train_GBM)
-    if objective == 'regression':
-        model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
-        model.fit(x_train_GBM, y_train_GBM)
-    if objective == 'ranking':
-        model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
-        # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
-        model.fit(x_train_GBM, y_train_GBM, group=group_all)
-        # &&& retry on ranked data
 
-    # Train the model
-    # Save the model
-    joblib.dump(model, os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"))
-
-def ask_trainTSAI():
-    print("train TSAI model?")
-    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
-    if proceed:
-        x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_TSAI_training_data(trait_name='HEIGHT')
-        trainTSAI(objective='multiclass',
-                 area_name='test-area',
-                 trait_name='HEIGHT',
-                 model_type='GBM',
-                 x_train_GBM=x_train_GBM,
-                 y_train_GBM=y_train_GBM,)
-
-ask_trainTSAI()
 
 ######### ** Validate
 #####
@@ -1760,146 +1758,3 @@ ask_trainTSAI()
 # &&& use mask to set noValue areas on exported data
 
 ############################################
-
-'''
-
-torch.cuda.is_available()
-returns false.
-
-Walk me through a diagnostic process
-include commands
-
-
-
-To diagnose why `torch.cuda.is_available()` is returning False, follow these steps:
-
-1. Check CUDA installation:
-   ```
-   nvidia-smi
-   ```
-   This should display GPU information. If not, CUDA might not be installed.
-
-DONE
-$ nvidia-smi
-Wed Apr 30 14:12:09 2025
-+-----------------------------------------------------------------------------------------+
-| NVIDIA-SMI 550.67                 Driver Version: 550.67         CUDA Version: 12.4     |
-|-----------------------------------------+------------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
-|                                         |                        |               MIG M. |
-|=========================================+========================+======================|
-|   0  NVIDIA GeForce RTX 3060        Off |   00000000:03:00.0  On |                  N/A |
-|  0%   42C    P8             12W /  170W |    1149MiB /  12288MiB |      0%      Default |
-|                                         |                        |                  N/A |
-+-----------------------------------------+------------------------+----------------------+
-
-+-----------------------------------------------------------------------------------------+
-| Processes:                                                                              |
-|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
-|        ID   ID                                                               Usage      |
-|=========================================================================================|
-|    0   N/A  N/A      4205      G   /usr/lib/xorg/Xorg                            941MiB |
-|    0   N/A  N/A      4334      G   /usr/bin/gnome-shell                           61MiB |
-|    0   N/A  N/A      6275      G   ...apHandler --variations-seed-version        134MiB |
-+-----------------------------------------------------------------------------------------+
-
-2. Verify PyTorch installation:
-   ```python
-   import torch
-   print(torch.__version__)
-   ```
-   Ensure you have a CUDA-compatible version.
-
-DONE
-2.0.0.post2
-
-3. Check CUDA version:
-   ```
-   nvcc --version
-   ```
-   Compare with PyTorch's CUDA version.
-DONE
-(model) nvcc --version
-Command 'nvcc' not found, but can be installed with:
-sudo apt install nvidia-cuda-toolkit
-
-4. Examine system PATH:
-   ```
-   echo $PATH
-   ```
-   Ensure CUDA directories are included.
-
-5. Check PyTorch CUDA compilation:
-   ```python
-   import torch
-   print(torch.version.cuda)
-   ```
-   If None, PyTorch wasn't built with CUDA support.
-
-DONE
-None
-
-6. Verify GPU drivers:
-   ```
-   nvidia-smi
-   ```
-   Check driver version and compare with CUDA requirements.
-
-7. Test CUDA toolkit:
-   ```
-   cuda-memcheck --version
-   ```
-   If not found, CUDA toolkit might be missing.
-
-DONE
-(model) cuda-memcheck --version
-Command 'cuda-memcheck' not found, but can be installed with:
-sudo apt install nvidia-cuda-toolkit
-
-8. Check for conflicts:
-   Ensure no other GPU processes are running.
-
-9. Reinstall PyTorch:
-   If issues persist, try reinstalling with CUDA support.
-
-----------------------------------------------------------------
-Check my feedback and suggest a fix. I am using conda.
-
-
-Based on your feedback, it appears that you have a CUDA-capable GPU (NVIDIA GeForce RTX 3060) and the NVIDIA drivers are installed correctly. However, there are a few issues:
-
-1. CUDA toolkit is not installed or not in your PATH (nvcc and cuda-memcheck are not found).
-2. PyTorch is installed (version 2.0.0.post2), but it's not built with CUDA support (torch.version.cuda is None).
-
-To fix this, I suggest the following steps:
-
-1. Install CUDA toolkit using conda:
-   ```
-   conda install -c nvidia cuda-toolkit
-   ```
-
-2. Reinstall PyTorch with CUDA support. First, remove the existing PyTorch:
-   ```
-   conda uninstall pytorch
-   ```
-
-   Then, install PyTorch with CUDA support. Visit https://pytorch.org/get-started/locally/ and select your preferences. For example, for CUDA 11.8:
-   ```
-   conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-   ```
-
-3. After installation, activate your conda environment and verify:
-   ```python
-   import torch
-   print(torch.__version__)
-   print(torch.version.cuda)
-   print(torch.cuda.is_available())
-
-   ```
-
-This should install PyTorch with CUDA support and make `torch.cuda.is_available()` return True. If issues persist, ensure your conda environment is activated when running Python, and consider creating a new conda environment for a clean installation.
-
-Also installed ipykernel with conda
-
-'''

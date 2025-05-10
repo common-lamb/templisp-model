@@ -973,6 +973,20 @@ def create_GBM_training_data(trait_name, show=False):
         print(f"y_test: {y_test.shape}") # (337,)
     return c
 
+def create_TSAI_training_data(trait_name, show=False):
+    a = sampledData(areas=area_grid(DATA_train),
+                    eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
+                    trait = trait_name)
+    b = split_for_TSAI(a)
+    if show:
+        x, y, splits = b
+        print("TSAI training data")
+        print(f"x: {x.shape}")
+        print(f"y: {y.shape}")
+        print(f"splits train: {len(splits[0])}")
+        print(f"splits test: {len(splits[1])}")
+    return b
+
 ######### ** Train
 
 def trainGBM(objective,
@@ -1028,16 +1042,37 @@ ask_trainGBM()
 ######### ** Validate
 
 def loadModel(area_name, trait_name, objective, model_type):
-    # Load the model
+    "Loads trained GBM and TSAI models from disk."
     model_path = os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl")
-    model = joblib.load(model_path)
+    if model_type == "GBM":
+        # Load the model
+        model = joblib.load(model_path)
+    elif model_type == "TSAI":
+        model = load_learner(model_path, cpu=False)
+    else:
+        raise ValueError(f'Model type ({model_type}) not recognized')
     return model
 
-def predictGBM(x_test_GBM, area_name, trait_name, objective, model_type):
+def predict_testSet(x_testSet, area_name, trait_name, objective, model_type):
+    "loads model and predicts y_predicted"
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
     # Predict the test labels
-    predicted_labels_test = model.predict(x_test_GBM)
-    return predicted_labels_test, model
+    if model_type == "GBM":
+        predicted_labels_test = model.predict(x_testSet)
+        return predicted_labels_test, model
+    elif model_type == "TSAI":
+        learn = model
+        test_dl = learn.dls.test_dl(x_testSet)
+        predictions, targets, decoded = learn.get_preds(dl=test_dl, with_decoded=True)
+        # returns a tuple of three elements: (predictions, targets, decoded)
+        #   - `predictions` are the raw outputs from the model
+        #     - For binary classification, it returns the probability of the positive class.
+        #     - For multi-class classification, it returns probabilities for each class.
+        #   - `targets` are the actual labels (if available in the dataset)
+        #   - `decoded` contains the decoded predictions (e.g., class labels for classification tasks)
+        return decoded.numpy(), learn
+    else:
+        raise ValueError(f'Model type ({model_type}) not recognized')
 
 #####
 # *** F1 etc table
@@ -1248,14 +1283,14 @@ def testset_predict_GBM(trait_name, area_name, objective, model_type, class_name
 
     # get dims
     f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = trait_name)
-    t_dim = f.shape[0] #t_dim
-    f_dim = f.shape[-1] #f_dim
+    t_dim = f.shape[0] #time_dimension
+    f_dim = f.shape[-1] #features_dimension
     # get feature names
     feature_names = [f"{i} s:{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
 
     # get prediction data
     x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=trait_name)
-    predicted_labels_test, model=predictGBM(x_test_GBM=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+    predicted_labels_test, model=predict_testSet(x_testSet=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
     # quantify prediction
     report_F1Table(
@@ -1584,8 +1619,6 @@ class_names: list of str names for classes which were predicted
     x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name, model_type)
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
-
-
     # quantify prediction
     report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names, model_type=model_type, trait_name=trait_name, pred_type=objective)
 
@@ -1601,19 +1634,6 @@ validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective=
 ################
 # * TST experiment
 ################
-def create_TSAI_training_data(trait_name, show=False):
-    a = sampledData(areas=area_grid(DATA_train),
-                    eopatch_samples_dir=EOPATCH_SAMPLES_DIR,
-                    trait = trait_name)
-    b = split_for_TSAI(a)
-    if show:
-        x, y, splits = b
-        print("TSAI training data")
-        print(f"x: {x.shape}")
-        print(f"y: {y.shape}")
-        print(f"splits train: {len(splits[0])}")
-        print(f"splits test: {len(splits[1])}")
-    return b
 
 # test = create_TSAI_training_data(trait_name='HEIGHT', show=True)
 
@@ -1646,7 +1666,7 @@ def trainTSAI(objective,
     # Set up the model and learner
     if objective == 'multiclass':
         tfms  = [None, [Categorize()]]
-        loss_func = LabelSmoothingCrossEntropyFlat() # &&& choose loss
+        loss_func = LabelSmoothingCrossEntropyFlat()
         metrics = [accuracy]
 
         # build unsupervised learner
@@ -1658,7 +1678,7 @@ def trainTSAI(objective,
     elif objective == 'regression':
         tfms  = [None, [TSRegression()]]
         metrics = [mae, rmse]
-        loss_func = MSELossFlat() # &&& choose loss
+        loss_func = MSELossFlat()
 
         learn = TSRegressor(x_train_TSAI, y=y_train_TSAI, splits=splits,
                              tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
@@ -1674,7 +1694,6 @@ def trainTSAI(objective,
     plt.ion()
     learning_rate = lr[0]
     print(f"Optimal Learning Rate: {learning_rate}")
-    learning_rate = lr[0]
     learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
     learn.plot_metrics()
 
@@ -1694,7 +1713,7 @@ def ask_trainTSAI():
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
-        trainTSAI(objective='regression',
+        trainTSAI(objective='multiclass',
                  area_name='test-area',
                  trait_name='HEIGHT',
                  model_type='TSAI',
@@ -1703,32 +1722,6 @@ def ask_trainTSAI():
                  splits = splits)
 
 ask_trainTSAI()
-
-
-
-
-
-
-# load
-identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
-learn = load_learner(os.path.join(MODELS_DIR, f"{identifier}"), cpu=False)
-
-# get preds and probas after load_learner_all
-dls = learn.dls
-valid_dl = dls.valid
-valid_probas, valid_targets, valid_preds = learn.get_preds(dl=valid_dl, with_decoded=True)
-
-# get preds and probas with new data
-test_ds = valid_dl.dataset.add_test(X, y)
-test_dl = valid_dl.new(test_ds)
-test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True, save_preds=None, save_targs=None)
-print(f'accuracy: {skm.accuracy_score(test_targets, test_preds):10.6f}')
-
-
-
-
-
-
 
 ######### ** Validate
 #####
@@ -1741,6 +1734,69 @@ print(f'accuracy: {skm.accuracy_score(test_targets, test_preds):10.6f}')
 # *** ROC and AUC
 #####
 # *** Feature importance
+
+def testset_predict_TSAI(trait_name, area_name, objective, model_type, class_names):
+    """
+    collects sampled data, predicts and then reports metrics
+
+    trait_name: str identifies trait in patches eg 'HEIGHT'
+    area_name: str descibes area being studied eg 'test-area'
+    objective: training objective, one of 'multiclass'  'regression', 'ranking'
+    model_type: model type one of 'GBM', 'TSAI'
+    class_names: list of str names for classes which were predicted
+    """
+
+    # get dims
+    f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = trait_name)
+    t_dim = f.shape[0] #time_dimension
+    f_dim = f.shape[-1] #features_dimension
+    # get feature names
+    feature_names = [f"{i} s:{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
+
+    # &&& integrate to  testset_predict_GBM
+    # get prediction data
+    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_TSAI_training_data(trait_name=trait_name)
+    # &&& splits to x/y test
+    predicted_labels_test, model=predict_testSet(x_testSet=x_test_TSAI, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+
+    # quantify prediction
+    # &&& make conditional on cat or cont
+    report_F1Table(
+        y_test_GBM=y_test_GBM,
+        predicted_labels_test=predicted_labels_test,
+        class_names=class_names,
+        model_type=model_type,
+        trait_name=trait_name,
+        pred_type=objective)
+    show_std_T_confusionMatrix(
+        predicted_labels_test=predicted_labels_test,
+        y_test_GBM=y_test_GBM,
+        trait_name=trait_name,
+        class_names=class_names,
+        model_type=model_type,
+        pred_type=objective)
+    show_ClassBalance(y_train_GBM=y_train_GBM, class_names=class_names)
+    show_ROCAUC(
+        model=model,
+        class_names=class_names,
+        y_test_GBM=y_test_GBM,
+        y_train_GBM=y_train_GBM,
+        x_test_GBM=x_test_GBM,
+        model_type=model_type,
+        trait_name=trait_name,
+        pred_type=objective)
+    show_featureImportance(
+        model=model,
+        feature_names=feature_names,
+        t_dim=t_dim,
+        f_dim=f_dim,
+        model_type=model_type,
+        trait_name=trait_name,
+        pred_type=objective)
+
+testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
+
+
 ######### ** Predict
 #####
 # *** visualize prediction
@@ -1751,7 +1807,7 @@ print(f'accuracy: {skm.accuracy_score(test_targets, test_preds):10.6f}')
 # *** Visualize trait diff
 #####
 # *** Quantify agreement
-
+#&&& ensure validation metrics are only calculated within mask for both experiments
 ######### ** Export to geotiff all for model comparison
 #####
 # *** &&&

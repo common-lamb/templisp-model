@@ -96,7 +96,7 @@ from sentinelhub import DataCollection, UtmZoneSplitter
 
 from fastai.torch_basics import set_seed
 import lightgbm as lgb
-import sklearn.metrics as skm
+from sklearn import metrics
 from sklearn import preprocessing
 from tsai.all import *
 
@@ -1056,7 +1056,7 @@ def loadModel(area_name, trait_name, objective, model_type):
         raise ValueError(f'Model type ({model_type}) not recognized')
     return model
 
-def predict_testSet(x_testSet, area_name, trait_name, objective, model_type):
+def predict_testSet(x_testSet, area_name, trait_name, objective, model_type, show=False):
     "loads model and predicts y_predicted"
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
     # Predict the test labels
@@ -1064,13 +1064,22 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type):
         predicted_labels_test = model.predict(x_testSet)
         return predicted_labels_test, model
     elif model_type == "TSAI":
+        # Labelled data
+        # learn = model
+        # dls = learn.dls
+        # valid_dl = dls.valid
+        # test_ds = valid_dl.dataset.add_test(x_testSet, y_testSet)
+        # test_dl = valid_dl.new(test_ds)
+        # test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
+        #
+        # Unlabelled data
         learn = model
         dls = learn.dls
-        valid_dl = dls.valid
-        test_ds = valid_dl.dataset.add_test(x_test_TSAI, y_test_TSAI)
+        test_ds = dls.dataset.add_test(x_testSet)
         test_dl = valid_dl.new(test_ds)
         test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
-        # returns a tuple of three elements: (predictions, targets, decoded)
+        #
+        # get_preds returns a tuple of three elements: (predictions, targets, decoded)
         #   - `predictions` are the raw outputs from the model
         #     - For binary classification, it returns the probability of the positive class.
         #     - For multi-class classification, it returns probabilities for each class.
@@ -1080,11 +1089,6 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type):
             test_probas.numpy().shape
             test_targets.numpy().shape
             test_preds.numpy().shape
-        # Unlabelled data
-        # dls = learn.dls
-        # test_ds = dls.dataset.add_test(x_test_TSAI)
-        # test_dl = valid_dl.new(test_ds)
-        # test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
         return test_preds.numpy(), learn
     else:
         raise ValueError(f'Model type ({model_type}) not recognized')
@@ -1110,6 +1114,7 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names, model_type, t
 
     # Extract and display metrics
     accuracy = metrics.accuracy_score(true_labels, predictions)
+
     avg_f1_score = metrics.f1_score(true_labels, predictions, average="weighted")
 
     f1_scores = metrics.f1_score(true_labels, predictions, labels=class_labels, average=None)
@@ -1341,6 +1346,7 @@ def testset_predict_GBM(trait_name, area_name, objective, model_type, class_name
         trait_name=trait_name,
         pred_type=objective)
 
+# USER
 testset_predict_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
 
 ######### ** Predict
@@ -1498,6 +1504,7 @@ def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, pred_type):
     plt.title(f"Prediction: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
     plt.show()
 
+# USER
 plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', pred_type='categorical', areas=area_grid(DATA_validate))
 
 #####
@@ -1563,6 +1570,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     fig.subplots_adjust(wspace=0.1, hspace=0.1)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
+# USER
 plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', pred_type="categorical")
 
 #####
@@ -1644,6 +1652,7 @@ class_names: list of str names for classes which were predicted
 
     # show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM, model_type=model_type, trait_name=trait_name, pred_type=objective)
 
+# USER
 validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
 
 ################
@@ -1696,7 +1705,7 @@ def trainTSAI(objective,
         tfms  = [None, [TSRegression()]]
         metrics = [mae, rmse]
         loss_func = MSELossFlat()
-        dropout=0.3,
+        dropout=0.3, # &&& hard coded
         fc_dropout=0.5
 
         set_seed(seed, reproducible=True)
@@ -1729,38 +1738,6 @@ def trainTSAI(objective,
     identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
     model_path = os.path.join(MODELS_DIR, identifier)
     learn.export(model_path)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 def ask_trainTSAI():
     print("train TSAI model?")
@@ -1830,7 +1807,6 @@ def testset_predict_TSAI(trait_name, area_name, objective, model_type, class_nam
 
         predicted_labels_test, model=predict_testSet(x_testSet=x_test_TSAI, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
-    print(f"length ytest {len(y_test)}")
     # &&& make conditional on model type and prediction type
     if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
         report_F1Table(
@@ -1874,6 +1850,7 @@ def testset_predict_TSAI(trait_name, area_name, objective, model_type, class_nam
             trait_name=trait_name,
             pred_type=objective)
 
+# USER
 # quantify prediction
 testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', class_names=['black','white'])
 
@@ -1897,96 +1874,3 @@ testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='mult
 ############################################
 
 ######
-
-# setup
-area_name='test-area'
-trait_name='HEIGHT'
-objective='multiclass'
-model_type='TSAI'
-
-# initial load data # from ask_trainTSAI # placed
-x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
-
-# train model # from trainTSAI # placed
-batch_size = 8192 # print(math.pow(2,13))
-n_epochs = 10 # &&& 300
-batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
-inplace = False #true, transformation of training data, faster if it fits in mem
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if not torch.cuda.is_available():
-    print("WARNING: device is cpu!")
-seed = RNDM
-
-# Set up the model and learner
-if objective == 'multiclass':
-    tfms  = [None, [Categorize()]]
-    metrics = [accuracy]
-    metrics = accuracy
-    loss_func = LabelSmoothingCrossEntropyFlat()
-    dropout=0.3,
-    fc_dropout=0.5
-
-    # build unsupervised learner
-    from fastai.torch_basics import set_seed
-    set_seed(seed, reproducible=True)
-
-    dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
-    dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
-    print(f"Validation set size: {len(dls.valid)}")
-    print(f"Validation batch size: {dls.valid.bs}")
-    model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len,
-                dropout=.3, fc_dropout=.5)
-    learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
-
-# Train the model
-plt.ioff() # turn off the plot of learning rate
-lr = learn.lr_find()
-plt.ion()
-learning_rate = lr[0]
-learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
-# post run check
-print(f"Optimal Learning Rate: {learning_rate}")
-learn.plot_metrics()
-
-# save model
-identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
-model_path = os.path.join(MODELS_DIR, identifier)
-learn.export(model_path)
-
-# load model # from loadModel # placed
-identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
-model_path = os.path.join(MODELS_DIR, identifier)
-learn = load_learner(model_path, cpu=False)
-
-# load data # from testset_predict_TSAI # placed
-x_all_TSAI, y_all_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
-# splits to x/y test
-x_train_TSAI = x_all_TSAI[splits[0]]
-y_train_TSAI = y_all_TSAI[splits[0]]
-x_test_TSAI = x_all_TSAI[splits[1]]
-y_test_TSAI = y_all_TSAI[splits[1]]
-
-# predict on model # from predict_testSet # placed
-dls = learn.dls
-valid_dl = dls.valid
-test_ds = valid_dl.dataset.add_test(x_test_TSAI, y_test_TSAI)
-test_dl = valid_dl.new(test_ds)
-test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
-if show:
-    test_probas.numpy().shape
-    test_targets.numpy().shape
-    test_preds.numpy().shape
-# return
-test_preds.numpy(), learn
-
-# Unlabelled data
-dls = learn.dls
-test_ds = dls.dataset.add_test(x_test_TSAI)
-test_dl = valid_dl.new(test_ds)
-test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
-if show:
-    test_probas.numpy().shape
-    test_targets.numpy().shape
-    test_preds.numpy().shape
-# return
-test_preds.numpy(), learn

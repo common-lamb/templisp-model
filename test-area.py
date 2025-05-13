@@ -1905,57 +1905,11 @@ learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
 print(f"Optimal Learning Rate: {learning_rate}")
 learn.plot_metrics()
 
-'''
-my metrics are not plotting,
-epoch     train_loss  valid_loss  accuracy  time
-0         1.128686    None        None      00:02
-1         1.101632    None        None      00:02
-2         1.035205    None        None      00:02
-3         0.951818    None        None      00:02
-4         0.871538    None        None      00:02
-5         0.803503    None        None      00:02
-6         0.747618    None        None      00:02
-7         0.702522    None        None      00:02
-8         0.666063    None        None      00:02
-9         0.636508    None        None      00:02
-Optimal Learning Rate: 0.00019054606673307717
-the plot shows and there is a line for train loss but there is no line for test loss
+# save model new
+identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+model_path = os.path.join(MODELS_DIR, identifier)
 
-
-
-
-The issue you're experiencing is that the validation loss and accuracy are not being calculated during training. This is likely because the validation set is not properly set up or recognized by the learner. Here are a few things to check and try:
-
-1. Ensure splits are correctly defined:
-   Make sure the `splits` variable returned by `create_TSAI_training_data` contains proper train/validation indices.
-
-2. Verify DataLoaders:
-   Check that `dls.valid` is not None and contains the validation data.
-
-4. Check validation set size:
-   Ensure your validation set is not empty or too small.
-
-5. Print validation set details:
-   After creating `dls`, print some information about the validation set:
-
-   ```python
-   print(f"Validation set size: {len(dls.valid)}")
-   print(f"Validation batch size: {dls.valid.bs}")
-   ```
-
-6. Use `validate` method:
-   After training, try running validation explicitly:
-
-   ```python
-   learn.validate()
-   ```
-
-If these steps don't resolve the issue, there might be a problem with how the data is being split or processed. You may need to review the `create_TSAI_training_data` function to ensure it's correctly preparing the data for both training and validation.
-
-
-'''
-# save model
-
+# save model old
 identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
 model_path = os.path.join(MODELS_DIR, identifier)
 learn.export(model_path)
@@ -1963,8 +1917,8 @@ learn.export(model_path)
 # load model # from loadModel new!
 
 # load model # from loadModel old
-identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
-model_path_2 = os.path.join(MODELS_DIR, identifier)
+identifier_2 = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+model_path_2 = os.path.join(MODELS_DIR, identifier_2)
 learn_2 = load_learner(model_path_2, cpu=False)
 
 
@@ -1985,9 +1939,27 @@ y_train_TSAI_2.shape # Out[877]: (13483,)
 x_test_TSAI_2.shape # Out[878]: (3370, 45, 10)
 y_test_TSAI_2.shape # Out[879]: (3370,)
 
+
+
+
+
 # predict on model # from predict_testSet
-test_ds = TSDatasets(x_test_TSAI_2, tfms=[None,[Categorize()]], splits_2=[[0, len(x_test_TSAI_2)], []])
-test_dl = learn_2.dls.test_dl(test_ds)
-test_dl = learn_2.dls.test_dl(x_test_TSAI_2) # &&& error here
-predictions, targets, decoded = learn_2.get_preds(dl=test_dl, with_decoded=True)
-# return decoded.numpy(), learn_2
+dls_2 = learn_2.dls
+valid_dl = dls_2.valid
+test_ds = valid_dl.dataset.add_test(x_test_TSAI_2, y_test_TSAI_2)
+test_dl = valid_dl.new(test_ds)
+test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
+test_probas.numpy().shape
+test_targets.numpy().shape
+test_preds.numpy().shape
+# return
+test_preds.numpy(), learn_2
+
+# Unlabelled data
+dls = learn_2.dls
+test_ds = dls.dataset.add_test(x_test_TSAI_2)
+test_dl = valid_dl.new(test_ds)
+test_probas, test_targets, test_preds = learn_2.get_preds(dl=test_dl, with_decoded=True)
+test_probas.numpy().shape
+test_targets.numpy().shape
+test_preds.numpy().shape

@@ -1062,7 +1062,7 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type):
         return predicted_labels_test, model
     elif model_type == "TSAI":
         learn = model
-        test_dl = learn.dls.test_dl(x_testSet)
+        test_dl = learn.dls.test_dl(x_testSet) # &&& error here
         predictions, targets, decoded = learn.get_preds(dl=test_dl, with_decoded=True)
         # returns a tuple of three elements: (predictions, targets, decoded)
         #   - `predictions` are the raw outputs from the model
@@ -1735,6 +1735,7 @@ ask_trainTSAI()
 #####
 # *** Feature importance
 
+# &&& rename testset_predict_GBM to testset_predict_validate
 def testset_predict_TSAI(trait_name, area_name, objective, model_type, class_names):
     """
     collects sampled data, predicts and then reports metrics
@@ -1753,48 +1754,74 @@ def testset_predict_TSAI(trait_name, area_name, objective, model_type, class_nam
     # get feature names
     feature_names = [f"{i} s:{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
 
+    GBM_flag = model_type == 'GBM'
+    TSAI_flag = model_type == 'TSAI'
+    regression_flag = objective == 'regression'
+    multiclass_flag = objective == 'multiclass'
+
     # &&& integrate to  testset_predict_GBM
     # get prediction data
-    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_TSAI_training_data(trait_name=trait_name)
-    # &&& splits to x/y test
-    predicted_labels_test, model=predict_testSet(x_testSet=x_test_TSAI, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+    if TSAI_flag:
+        x_all_TSAI, y_all_TSAI, splits = create_TSAI_training_data(trait_name=trait_name)
+        # splits to x/y test
+        x_train_TSAI = x_all_TSAI[splits[0]]
+        y_train_TSAI= y_all_TSAI[splits[0]]
+        x_test_TSAI= x_all_TSAI[splits[1]]
+        y_test_TSAI= y_all_TSAI[splits[1]]
+        # connect
+        x_train = x_train_TSAI# done
+        y_train = y_train_TSAI# done
+        x_test = x_test_TSAI# done
+        y_test = y_test_TSAI# done
 
-    # quantify prediction
-    # &&& make conditional on cat or cont
-    report_F1Table(
-        y_test_GBM=y_test_GBM,
-        predicted_labels_test=predicted_labels_test,
-        class_names=class_names,
-        model_type=model_type,
-        trait_name=trait_name,
-        pred_type=objective)
-    show_std_T_confusionMatrix(
-        predicted_labels_test=predicted_labels_test,
-        y_test_GBM=y_test_GBM,
-        trait_name=trait_name,
-        class_names=class_names,
-        model_type=model_type,
-        pred_type=objective)
-    show_ClassBalance(y_train_GBM=y_train_GBM, class_names=class_names)
-    show_ROCAUC(
-        model=model,
-        class_names=class_names,
-        y_test_GBM=y_test_GBM,
-        y_train_GBM=y_train_GBM,
-        x_test_GBM=x_test_GBM,
-        model_type=model_type,
-        trait_name=trait_name,
-        pred_type=objective)
-    show_featureImportance(
-        model=model,
-        feature_names=feature_names,
-        t_dim=t_dim,
-        f_dim=f_dim,
-        model_type=model_type,
-        trait_name=trait_name,
-        pred_type=objective)
+        predicted_labels_test, model=predict_testSet(x_testSet=x_test_TSAI, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
-testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
+    print(f"length ytest {len(y_test)}")
+    # &&& make conditional on model type and prediction type
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
+        report_F1Table(
+            y_test_GBM=y_test,
+            predicted_labels_test=predicted_labels_test,
+            class_names=class_names,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
+        show_std_T_confusionMatrix(
+            predicted_labels_test=predicted_labels_test,
+            y_test_GBM=y_test,
+            trait_name=trait_name,
+            class_names=class_names,
+            model_type=model_type,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
+        show_ClassBalance(y_train_GBM=y_train, class_names=class_names)
+
+    if (GBM_flag) and (multiclass_flag or regression_flag):
+        show_ROCAUC(
+            model=model,
+            class_names=class_names,
+            y_test_GBM=y_test,
+            y_train_GBM=y_train,
+            x_test_GBM=x_test,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+    if (GBM_flag) and (multiclass_flag or regression_flag):
+        show_featureImportance(
+            model=model,
+            feature_names=feature_names,
+            t_dim=t_dim,
+            f_dim=f_dim,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+# quantify prediction
+testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', class_names=['black','white'])
 
 
 ######### ** Predict
@@ -1814,3 +1841,153 @@ testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='mult
 # &&& use mask to set noValue areas on exported data
 
 ############################################
+
+######
+
+# setup
+area_name='test-area'
+trait_name='HEIGHT'
+objective='multiclass'
+model_type='TSAI'
+
+# initial load data # from ask_trainTSAI
+x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
+
+# train model # from trainTSAI
+batch_size = 8192 # print(math.pow(2,13))
+n_epochs = 10 # &&& 300
+batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
+inplace = False #true, transformation of training data, faster if it fits in mem
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if not torch.cuda.is_available():
+    print("WARNING: device is cpu!")
+seed = RNDM
+
+# Set up the model and learner
+if objective == 'multiclass':
+    tfms  = [None, [Categorize()]]
+    metrics = [accuracy]
+    metrics = accuracy
+    loss_func = LabelSmoothingCrossEntropyFlat()
+    dropout=0.3,
+    fc_dropout=0.5
+
+    # build unsupervised learner new!
+    from fastai.torch_basics import set_seed
+    set_seed(seed, reproducible=True)
+
+    dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
+    dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
+    print(f"Validation set size: {len(dls.valid)}")
+    print(f"Validation batch size: {dls.valid.bs}")
+    model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len,
+                dropout=.3, fc_dropout=.5)
+    learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
+
+
+
+    # build unsupervised learner old
+    # arch = TST
+    # learn = TSClassifier(x_train_TSAI, y=y_train_TSAI, splits=splits,
+    #                      tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
+    #                      arch=arch, loss_func=loss_func, metrics=metrics,
+    #                      arch_config=dict(dropout=0.3, fc_dropout=0.5), # TST args: dropout=.3, fc_dropout=.5
+    #                      inplace=inplace, device=device, seed=seed)
+
+# Train the model
+plt.ioff() # turn off the plot of learning rate
+lr = learn.lr_find()
+plt.ion()
+learning_rate = lr[0]
+learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
+
+# post run check
+print(f"Optimal Learning Rate: {learning_rate}")
+learn.plot_metrics()
+
+'''
+my metrics are not plotting,
+epoch     train_loss  valid_loss  accuracy  time
+0         1.128686    None        None      00:02
+1         1.101632    None        None      00:02
+2         1.035205    None        None      00:02
+3         0.951818    None        None      00:02
+4         0.871538    None        None      00:02
+5         0.803503    None        None      00:02
+6         0.747618    None        None      00:02
+7         0.702522    None        None      00:02
+8         0.666063    None        None      00:02
+9         0.636508    None        None      00:02
+Optimal Learning Rate: 0.00019054606673307717
+the plot shows and there is a line for train loss but there is no line for test loss
+
+
+
+
+The issue you're experiencing is that the validation loss and accuracy are not being calculated during training. This is likely because the validation set is not properly set up or recognized by the learner. Here are a few things to check and try:
+
+1. Ensure splits are correctly defined:
+   Make sure the `splits` variable returned by `create_TSAI_training_data` contains proper train/validation indices.
+
+2. Verify DataLoaders:
+   Check that `dls.valid` is not None and contains the validation data.
+
+4. Check validation set size:
+   Ensure your validation set is not empty or too small.
+
+5. Print validation set details:
+   After creating `dls`, print some information about the validation set:
+
+   ```python
+   print(f"Validation set size: {len(dls.valid)}")
+   print(f"Validation batch size: {dls.valid.bs}")
+   ```
+
+6. Use `validate` method:
+   After training, try running validation explicitly:
+
+   ```python
+   learn.validate()
+   ```
+
+If these steps don't resolve the issue, there might be a problem with how the data is being split or processed. You may need to review the `create_TSAI_training_data` function to ensure it's correctly preparing the data for both training and validation.
+
+
+'''
+# save model
+
+identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+model_path = os.path.join(MODELS_DIR, identifier)
+learn.export(model_path)
+
+# load model # from loadModel new!
+
+# load model # from loadModel old
+identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+model_path_2 = os.path.join(MODELS_DIR, identifier)
+learn_2 = load_learner(model_path_2, cpu=False)
+
+
+
+# load data # from testset_predict_TSAI
+x_all_TSAI_2, y_all_TSAI_2, splits_2 = create_TSAI_training_data(trait_name='HEIGHT')
+splits_2
+x_all_TSAI_2.shape
+y_all_TSAI_2.shape
+# splits to x/y test
+x_train_TSAI_2 = x_all_TSAI_2[splits_2[0]]
+y_train_TSAI_2 = y_all_TSAI_2[splits_2[0]]
+x_test_TSAI_2 = x_all_TSAI_2[splits_2[1]]
+y_test_TSAI_2 = y_all_TSAI_2[splits_2[1]]
+
+x_train_TSAI_2.shape # Out[876]: (13483, 45, 10)
+y_train_TSAI_2.shape # Out[877]: (13483,)
+x_test_TSAI_2.shape # Out[878]: (3370, 45, 10)
+y_test_TSAI_2.shape # Out[879]: (3370,)
+
+# predict on model # from predict_testSet
+test_ds = TSDatasets(x_test_TSAI_2, tfms=[None,[Categorize()]], splits_2=[[0, len(x_test_TSAI_2)], []])
+test_dl = learn_2.dls.test_dl(test_ds)
+test_dl = learn_2.dls.test_dl(x_test_TSAI_2) # &&& error here
+predictions, targets, decoded = learn_2.get_preds(dl=test_dl, with_decoded=True)
+# return decoded.numpy(), learn_2

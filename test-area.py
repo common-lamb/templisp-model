@@ -94,6 +94,7 @@ import shapely.geometry
 from shapely.geometry import Polygon
 from sentinelhub import DataCollection, UtmZoneSplitter
 
+from fastai.torch_basics import set_seed
 import lightgbm as lgb
 import sklearn.metrics as skm
 from sklearn import preprocessing
@@ -1043,7 +1044,9 @@ ask_trainGBM()
 
 def loadModel(area_name, trait_name, objective, model_type):
     "Loads trained GBM and TSAI models from disk."
-    model_path = os.path.join(MODELS_DIR, f"{area_name}-{trait_name}-{objective}-{model_type}.pkl")
+    identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+    model_path = os.path.join(MODELS_DIR, identifier)
+
     if model_type == "GBM":
         # Load the model
         model = joblib.load(model_path)
@@ -1062,15 +1065,27 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type):
         return predicted_labels_test, model
     elif model_type == "TSAI":
         learn = model
-        test_dl = learn.dls.test_dl(x_testSet) # &&& error here
-        predictions, targets, decoded = learn.get_preds(dl=test_dl, with_decoded=True)
+        dls = learn.dls
+        valid_dl = dls.valid
+        test_ds = valid_dl.dataset.add_test(x_test_TSAI, y_test_TSAI)
+        test_dl = valid_dl.new(test_ds)
+        test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
         # returns a tuple of three elements: (predictions, targets, decoded)
         #   - `predictions` are the raw outputs from the model
         #     - For binary classification, it returns the probability of the positive class.
         #     - For multi-class classification, it returns probabilities for each class.
         #   - `targets` are the actual labels (if available in the dataset)
         #   - `decoded` contains the decoded predictions (e.g., class labels for classification tasks)
-        return decoded.numpy(), learn
+        if show:
+            test_probas.numpy().shape
+            test_targets.numpy().shape
+            test_preds.numpy().shape
+        # Unlabelled data
+        # dls = learn.dls
+        # test_ds = dls.dataset.add_test(x_test_TSAI)
+        # test_dl = valid_dl.new(test_ds)
+        # test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
+        return test_preds.numpy(), learn
     else:
         raise ValueError(f'Model type ({model_type}) not recognized')
 
@@ -1655,7 +1670,6 @@ def trainTSAI(objective,
     # shared setup
     batch_size = 8192 # print(math.pow(2,13))
     n_epochs = 300
-    arch = TST
     batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
     inplace = False #true, transformation of training data, faster if it fits in mem
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1666,25 +1680,31 @@ def trainTSAI(objective,
     # Set up the model and learner
     if objective == 'multiclass':
         tfms  = [None, [Categorize()]]
-        loss_func = LabelSmoothingCrossEntropyFlat()
         metrics = [accuracy]
+        loss_func = LabelSmoothingCrossEntropyFlat()
+        dropout=0.3, # &&& hard coded
+        fc_dropout=0.5
 
         # build unsupervised learner
-        learn = TSClassifier(x_train_TSAI, y=y_train_TSAI, splits=splits,
-                             tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
-                             arch=arch, loss_func=loss_func, metrics=metrics,
-                             arch_config=dict(dropout=0.3, fc_dropout=0.5), # TST args: dropout=.3, fc_dropout=.5
-                             inplace=inplace, device=device, seed=seed)
-    elif objective == 'regression':
+        set_seed(seed, reproducible=True)
+        dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
+        dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
+        model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=.3, fc_dropout=.5)
+        learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
+
+    elif objective == 'regression': # &&&
         tfms  = [None, [TSRegression()]]
         metrics = [mae, rmse]
         loss_func = MSELossFlat()
+        dropout=0.3,
+        fc_dropout=0.5
 
-        learn = TSRegressor(x_train_TSAI, y=y_train_TSAI, splits=splits,
-                             tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
-                             arch=arch, loss_func=loss_func, metrics=metrics,
-                             arch_config=dict(dropout=0.3, fc_dropout=0.5), # TST args: dropout=.3, fc_dropout=.5
-                             inplace=inplace, device=device, seed=seed)
+        set_seed(seed, reproducible=True)
+        dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
+        dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
+        model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=.3, fc_dropout=.5)
+        learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
+
     else:
         raise ValueError(f"The provided objective ({objective}) is not recognized")
 
@@ -1693,8 +1713,9 @@ def trainTSAI(objective,
     lr = learn.lr_find()
     plt.ion()
     learning_rate = lr[0]
-    print(f"Optimal Learning Rate: {learning_rate}")
     learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
+    # post run check
+    print(f"Optimal Learning Rate: {learning_rate}")
     learn.plot_metrics()
 
     if show:
@@ -1704,9 +1725,42 @@ def trainTSAI(objective,
         interp = ClassificationInterpretation.from_learner(learn)
         interp.plot_confusion_matrix()
 
-    # Save the model
-    identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
-    learn.export(os.path.join(MODELS_DIR, f"{identifier}.pkl"))
+    # Save learner
+    identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+    model_path = os.path.join(MODELS_DIR, identifier)
+    learn.export(model_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def ask_trainTSAI():
     print("train TSAI model?")
@@ -1850,10 +1904,10 @@ trait_name='HEIGHT'
 objective='multiclass'
 model_type='TSAI'
 
-# initial load data # from ask_trainTSAI
+# initial load data # from ask_trainTSAI # placed
 x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
 
-# train model # from trainTSAI
+# train model # from trainTSAI # placed
 batch_size = 8192 # print(math.pow(2,13))
 n_epochs = 10 # &&& 300
 batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
@@ -1872,7 +1926,7 @@ if objective == 'multiclass':
     dropout=0.3,
     fc_dropout=0.5
 
-    # build unsupervised learner new!
+    # build unsupervised learner
     from fastai.torch_basics import set_seed
     set_seed(seed, reproducible=True)
 
@@ -1884,82 +1938,55 @@ if objective == 'multiclass':
                 dropout=.3, fc_dropout=.5)
     learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
 
-
-
-    # build unsupervised learner old
-    # arch = TST
-    # learn = TSClassifier(x_train_TSAI, y=y_train_TSAI, splits=splits,
-    #                      tfms=tfms, batch_tfms=batch_tfms, bs=batch_size,
-    #                      arch=arch, loss_func=loss_func, metrics=metrics,
-    #                      arch_config=dict(dropout=0.3, fc_dropout=0.5), # TST args: dropout=.3, fc_dropout=.5
-    #                      inplace=inplace, device=device, seed=seed)
-
 # Train the model
 plt.ioff() # turn off the plot of learning rate
 lr = learn.lr_find()
 plt.ion()
 learning_rate = lr[0]
 learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
-
 # post run check
 print(f"Optimal Learning Rate: {learning_rate}")
 learn.plot_metrics()
 
-# save model new
-identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
-model_path = os.path.join(MODELS_DIR, identifier)
-
-# save model old
+# save model
 identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
 model_path = os.path.join(MODELS_DIR, identifier)
 learn.export(model_path)
 
-# load model # from loadModel new!
+# load model # from loadModel # placed
+identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
+model_path = os.path.join(MODELS_DIR, identifier)
+learn = load_learner(model_path, cpu=False)
 
-# load model # from loadModel old
-identifier_2 = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
-model_path_2 = os.path.join(MODELS_DIR, identifier_2)
-learn_2 = load_learner(model_path_2, cpu=False)
-
-
-
-# load data # from testset_predict_TSAI
-x_all_TSAI_2, y_all_TSAI_2, splits_2 = create_TSAI_training_data(trait_name='HEIGHT')
-splits_2
-x_all_TSAI_2.shape
-y_all_TSAI_2.shape
+# load data # from testset_predict_TSAI # placed
+x_all_TSAI, y_all_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
 # splits to x/y test
-x_train_TSAI_2 = x_all_TSAI_2[splits_2[0]]
-y_train_TSAI_2 = y_all_TSAI_2[splits_2[0]]
-x_test_TSAI_2 = x_all_TSAI_2[splits_2[1]]
-y_test_TSAI_2 = y_all_TSAI_2[splits_2[1]]
+x_train_TSAI = x_all_TSAI[splits[0]]
+y_train_TSAI = y_all_TSAI[splits[0]]
+x_test_TSAI = x_all_TSAI[splits[1]]
+y_test_TSAI = y_all_TSAI[splits[1]]
 
-x_train_TSAI_2.shape # Out[876]: (13483, 45, 10)
-y_train_TSAI_2.shape # Out[877]: (13483,)
-x_test_TSAI_2.shape # Out[878]: (3370, 45, 10)
-y_test_TSAI_2.shape # Out[879]: (3370,)
-
-
-
-
-
-# predict on model # from predict_testSet
-dls_2 = learn_2.dls
-valid_dl = dls_2.valid
-test_ds = valid_dl.dataset.add_test(x_test_TSAI_2, y_test_TSAI_2)
+# predict on model # from predict_testSet # placed
+dls = learn.dls
+valid_dl = dls.valid
+test_ds = valid_dl.dataset.add_test(x_test_TSAI, y_test_TSAI)
 test_dl = valid_dl.new(test_ds)
 test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
-test_probas.numpy().shape
-test_targets.numpy().shape
-test_preds.numpy().shape
+if show:
+    test_probas.numpy().shape
+    test_targets.numpy().shape
+    test_preds.numpy().shape
 # return
-test_preds.numpy(), learn_2
+test_preds.numpy(), learn
 
 # Unlabelled data
-dls = learn_2.dls
-test_ds = dls.dataset.add_test(x_test_TSAI_2)
+dls = learn.dls
+test_ds = dls.dataset.add_test(x_test_TSAI)
 test_dl = valid_dl.new(test_ds)
-test_probas, test_targets, test_preds = learn_2.get_preds(dl=test_dl, with_decoded=True)
-test_probas.numpy().shape
-test_targets.numpy().shape
-test_preds.numpy().shape
+test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
+if show:
+    test_probas.numpy().shape
+    test_targets.numpy().shape
+    test_preds.numpy().shape
+# return
+test_preds.numpy(), learn

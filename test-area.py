@@ -1096,9 +1096,9 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type, sho
 #####
 # *** F1 etc table
 
-def report_F1Table(y_test_GBM, predicted_labels_test, class_names, model_type, trait_name, pred_type):
+def report_Metrics_Classification(y_test, predicted_labels_test, class_names, model_type, trait_name, pred_type):
 
-    class_labels_float = np.unique(y_test_GBM)
+    class_labels_float = np.unique(y_test)
     class_labels = [int(x) for x in class_labels_float]
 
     #handle unexpected class names
@@ -1108,9 +1108,9 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names, model_type, t
         print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
         class_names = class_labels
 
-    mask = np.in1d(predicted_labels_test, y_test_GBM)
+    mask = np.in1d(predicted_labels_test, y_test)
     predictions = predicted_labels_test[mask]
-    true_labels = y_test_GBM[mask]
+    true_labels = y_test[mask]
 
     # Extract and display metrics
     accuracy = metrics.accuracy_score(true_labels, predictions)
@@ -1136,6 +1136,24 @@ def report_F1Table(y_test_GBM, predicted_labels_test, class_names, model_type, t
         print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
     print("         --------------------------------------------------")
     print("")
+
+
+def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_name, pred_type):
+
+    # Calculate metrics
+    mse = metrics.mean_squared_error(y_test, predicted_values_test)
+    rmse = np.sqrt(mse)
+    mae = metrics.mean_absolute_error(y_test, predicted_values_test)
+    r2 = metrics.r2_score(y_test, predicted_values_test)
+
+    print("")
+    print(f"Metrics for: model {model_type}, target {target_name}, prediction {pred_type}")
+    print("---------------------------------")
+    print(f"Mean Squared Error (MSE): {mse:.4f}")
+    print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
+    print(f"Mean Absolute Error (MAE): {mae:.4f}")
+    print(f"R-squared (R²): {r2:.4f}")
+    print("---------------------------------")
 
 #####
 # *** Confusion matrices
@@ -1176,18 +1194,18 @@ def plot_confusion_matrix(
     plt.xlabel(xlabel, fontsize=20)
 
 def show_std_T_confusionMatrix(predicted_labels_test,
-                               y_test_GBM,
+                               y_test,
                                trait_name,
                                model_type,
                                pred_type,
                                class_names):
     "plots standard and transposed confusion matrix"
 
-    mask = np.in1d(predicted_labels_test, y_test_GBM)
+    mask = np.in1d(predicted_labels_test, y_test)
     predictions = predicted_labels_test[mask]
-    true_labels = y_test_GBM[mask]
+    true_labels = y_test[mask]
 
-    class_labels_float = np.unique(y_test_GBM)
+    class_labels_float = np.unique(y_test)
     class_labels = [int(x) for x in class_labels_float]
 
     fig = plt.figure(figsize=(20, 20))
@@ -1212,13 +1230,65 @@ def show_std_T_confusionMatrix(predicted_labels_test,
 
     plt.tight_layout()
 
+
+def plot_regression_results(
+    y_true,
+    y_pred,
+    title,
+    ylabel="True values",
+    xlabel="Predicted values"):
+    """
+    Plots regression results including a scatter plot and error histogram.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+
+    # Scatter plot
+    ax1.scatter(y_pred, y_true, alpha=0.5)
+    ax1.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'r--', lw=2)
+    ax1.set_xlabel(xlabel, fontsize=15)
+    ax1.set_ylabel(ylabel, fontsize=15)
+    ax1.set_title(f"Scatter plot: {title}", fontsize=20)
+
+    # Add R2 and MSE to plot
+    r2 = metrics.r2_score(y_true, y_pred)
+    mse = metrics.mean_squared_error(y_true, y_pred)
+    ax1.text(0.05, 0.95, f'R2: {r2:.2f}\nMSE: {mse:.2f}', transform=ax1.transAxes,
+             verticalalignment='top', fontsize=15)
+
+    # Error histogram
+    errors = y_pred - y_true
+    ax2.hist(errors, bins=30, edgecolor='black')
+    ax2.set_xlabel("Prediction Error", fontsize=15)
+    ax2.set_ylabel("Frequency", fontsize=15)
+    ax2.set_title(f"Error Distribution: {title}", fontsize=20)
+
+    plt.tight_layout()
+
+def show_regression_results(predicted_values_test,
+                            y_test,
+                            trait_name,
+                            model_type,
+                            pred_type):
+    """Plots regression results"""
+
+    fig = plt.figure(figsize=(20, 10))
+
+    plot_regression_results(
+        y_test,
+        predicted_values_test,
+        ylabel="True Values",
+        xlabel="Predicted Values",
+        title=f"Regression Results: model {model_type}, trait {trait_name}, prediction {pred_type}")
+
+    plt.tight_layout()
+
 #####
 # *** Class balance
 
-def show_ClassBalance(y_train_GBM, class_names):
+def show_ClassBalance(y_train, class_names):
 
     fig = plt.figure(figsize=(20, 5))
-    label_ids, label_counts = np.unique(y_train_GBM, return_counts=True)
+    label_ids, label_counts = np.unique(y_train, return_counts=True)
     label_ids = [int(x) for x in label_ids]
     plt.bar(range(len(label_ids)), label_counts)
     plt.xticks(range(len(label_ids)),
@@ -1230,11 +1300,11 @@ def show_ClassBalance(y_train_GBM, class_names):
 #####
 # *** ROC and AUC
 
-def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM, model_type, trait_name, pred_type):
+def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, model_type, trait_name, pred_type):
 
     class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
     labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
-    scores_test = model.predict_proba(x_test_GBM)
+    scores_test = model_GBM.predict_proba(x_test_GBM)
     colors = plt.cm.Set1.colors
 
     fpr, tpr, roc_auc = {}, {}, {}
@@ -1268,10 +1338,10 @@ def show_ROCAUC(model, class_names, y_test_GBM, y_train_GBM, x_test_GBM, model_t
 #####
 # *** Feature importance
 
-def show_featureImportance(model, feature_names, t_dim, f_dim, model_type, trait_name, pred_type):
+def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, trait_name, pred_type):
     "plots a heatmap of time and feature showing contribution of each to predictions"
     # Get feature importances and reshape them to dates and features
-    feature_importances = model.feature_importances_.reshape((t_dim, f_dim))
+    feature_importances = model_GBM.feature_importances_.reshape((t_dim, f_dim))
 
     fig = plt.figure(figsize=(15, 15))
     ax = plt.gca()
@@ -1290,7 +1360,10 @@ def show_featureImportance(model, feature_names, t_dim, f_dim, model_type, trait
     cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
     cb.ax.tick_params(labelsize=20)
 
-def testset_predict_GBM(trait_name, area_name, objective, model_type, class_names):
+
+
+
+def testset_predict_validate(trait_name, area_name, objective, model_type, class_names):
     """
     collects sampled data, predicts and then reports metrics
 
@@ -1300,7 +1373,6 @@ def testset_predict_GBM(trait_name, area_name, objective, model_type, class_name
     model_type: model type one of 'GBM', 'TSAI'
     class_names: list of str names for classes which were predicted
     """
-
     # get dims
     f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = trait_name)
     t_dim = f.shape[0] #time_dimension
@@ -1308,46 +1380,101 @@ def testset_predict_GBM(trait_name, area_name, objective, model_type, class_name
     # get feature names
     feature_names = [f"{i} s:{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
 
-    # get prediction data
-    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=trait_name)
-    predicted_labels_test, model=predict_testSet(x_testSet=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+    GBM_flag = model_type == 'GBM'
+    TSAI_flag = model_type == 'TSAI'
+    regression_flag = objective == 'regression'
+    multiclass_flag = objective == 'multiclass'
 
-    # quantify prediction
-    report_F1Table(
-        y_test_GBM=y_test_GBM,
-        predicted_labels_test=predicted_labels_test,
-        class_names=class_names,
-        model_type=model_type,
-        trait_name=trait_name,
-        pred_type=objective)
-    show_std_T_confusionMatrix(
-        predicted_labels_test=predicted_labels_test,
-        y_test_GBM=y_test_GBM,
-        trait_name=trait_name,
-        class_names=class_names,
-        model_type=model_type,
-        pred_type=objective)
-    show_ClassBalance(y_train_GBM=y_train_GBM, class_names=class_names)
-    show_ROCAUC(
-        model=model,
-        class_names=class_names,
-        y_test_GBM=y_test_GBM,
-        y_train_GBM=y_train_GBM,
-        x_test_GBM=x_test_GBM,
-        model_type=model_type,
-        trait_name=trait_name,
-        pred_type=objective)
-    show_featureImportance(
-        model=model,
-        feature_names=feature_names,
-        t_dim=t_dim,
-        f_dim=f_dim,
-        model_type=model_type,
-        trait_name=trait_name,
-        pred_type=objective)
+    # get prediction data
+    # &&& integrate to  testset_predict_GBM
+    if GBM_flag:
+        x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=trait_name)
+        predicted_test, model = predict_testSet(x_testSet=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+        # connect
+        x_train = x_train_GBM
+        y_train = y_train_GBM
+        x_test = x_test_GBM
+        y_test = y_test_GBM
+    elif TSAI_flag:
+        x_all_TSAI, y_all_TSAI, splits = create_TSAI_training_data(trait_name=trait_name)
+        # splits to x/y test
+        x_train_TSAI = x_all_TSAI[splits[0]]
+        y_train_TSAI= y_all_TSAI[splits[0]]
+        x_test_TSAI= x_all_TSAI[splits[1]]
+        y_test_TSAI= y_all_TSAI[splits[1]]
+        predicted_test, model=predict_testSet(x_testSet=x_test_TSAI, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+        # connect
+        x_train = x_train_TSAI
+        y_train = y_train_TSAI
+        x_test = x_test_TSAI
+        y_test = y_test_TSAI
+    else:
+        raise ValueError('Model type not recognized')
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
+        report_Metrics_Classification(
+            y_test=y_test,
+            predicted_labels_test=predicted_test,
+            class_names=class_names,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+    if (GBM_flag or TSAI_flag ) and (regression_flag):
+        # &&& untested
+        report_Metrics_Regression(
+            y_test=y_test,
+            predicted_values_test=predicted_test,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
+        show_std_T_confusionMatrix(
+            predicted_labels_test=predicted_test,
+            y_test=y_test,
+            trait_name=trait_name,
+            class_names=class_names,
+            model_type=model_type,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (regression_flag):
+        # &&& untested
+        show_regression_results(
+            predicted_values_test=predicted_test,
+            y_test=y_test,
+            trait_name=trait_name,
+            model_type=model_type,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
+        show_ClassBalance(y_train=y_train, class_names=class_names)
+
+    if (GBM_flag) and (multiclass_flag or regression_flag):
+        show_ROCAUC(
+            model_GBM=model,
+            class_names=class_names,
+            y_test_GBM=y_test,
+            y_train_GBM=y_train,
+            x_test_GBM=x_test,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+    if (GBM_flag) and (multiclass_flag or regression_flag):
+        show_featureImportance(
+            model_GBM=model,
+            feature_names=feature_names,
+            t_dim=t_dim,
+            f_dim=f_dim,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+
+
 
 # USER
-testset_predict_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
 
 ######### ** Predict
 
@@ -1766,94 +1893,10 @@ ask_trainTSAI()
 #####
 # *** Feature importance
 
-# &&& rename testset_predict_GBM to testset_predict_validate
-def testset_predict_TSAI(trait_name, area_name, objective, model_type, class_names):
-    """
-    collects sampled data, predicts and then reports metrics
-
-    trait_name: str identifies trait in patches eg 'HEIGHT'
-    area_name: str descibes area being studied eg 'test-area'
-    objective: training objective, one of 'multiclass'  'regression', 'ranking'
-    model_type: model type one of 'GBM', 'TSAI'
-    class_names: list of str names for classes which were predicted
-    """
-
-    # get dims
-    f, l = sampledData(areas=area_grid(DATA_train), eopatch_samples_dir=EOPATCH_SAMPLES_DIR, trait = trait_name)
-    t_dim = f.shape[0] #time_dimension
-    f_dim = f.shape[-1] #features_dimension
-    # get feature names
-    feature_names = [f"{i} s:{s}" for i in unique_tif_indicators()['indices'] for s in unique_tif_indicators()['sigmas']]
-
-    GBM_flag = model_type == 'GBM'
-    TSAI_flag = model_type == 'TSAI'
-    regression_flag = objective == 'regression'
-    multiclass_flag = objective == 'multiclass'
-
-    # &&& integrate to  testset_predict_GBM
-    # get prediction data
-    if TSAI_flag:
-        x_all_TSAI, y_all_TSAI, splits = create_TSAI_training_data(trait_name=trait_name)
-        # splits to x/y test
-        x_train_TSAI = x_all_TSAI[splits[0]]
-        y_train_TSAI= y_all_TSAI[splits[0]]
-        x_test_TSAI= x_all_TSAI[splits[1]]
-        y_test_TSAI= y_all_TSAI[splits[1]]
-        # connect
-        x_train = x_train_TSAI# done
-        y_train = y_train_TSAI# done
-        x_test = x_test_TSAI# done
-        y_test = y_test_TSAI# done
-
-        predicted_labels_test, model=predict_testSet(x_testSet=x_test_TSAI, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
-
-    # &&& make conditional on model type and prediction type
-    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
-        report_F1Table(
-            y_test_GBM=y_test,
-            predicted_labels_test=predicted_labels_test,
-            class_names=class_names,
-            model_type=model_type,
-            trait_name=trait_name,
-            pred_type=objective)
-
-    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
-        show_std_T_confusionMatrix(
-            predicted_labels_test=predicted_labels_test,
-            y_test_GBM=y_test,
-            trait_name=trait_name,
-            class_names=class_names,
-            model_type=model_type,
-            pred_type=objective)
-
-    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
-        show_ClassBalance(y_train_GBM=y_train, class_names=class_names)
-
-    if (GBM_flag) and (multiclass_flag or regression_flag):
-        show_ROCAUC(
-            model=model,
-            class_names=class_names,
-            y_test_GBM=y_test,
-            y_train_GBM=y_train,
-            x_test_GBM=x_test,
-            model_type=model_type,
-            trait_name=trait_name,
-            pred_type=objective)
-
-    if (GBM_flag) and (multiclass_flag or regression_flag):
-        show_featureImportance(
-            model=model,
-            feature_names=feature_names,
-            t_dim=t_dim,
-            f_dim=f_dim,
-            model_type=model_type,
-            trait_name=trait_name,
-            pred_type=objective)
 
 # USER
 # quantify prediction
-testset_predict_TSAI(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', class_names=['black','white'])
-
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', class_names=['black','white'])
 
 ######### ** Predict
 #####

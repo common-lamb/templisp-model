@@ -51,7 +51,6 @@
 # *** Visualize predicted trait
 # *** Visualize trait diff
 # *** Quantify agreement
-# &&& vvv
 # * TST experiment
 # ** Train
 # *** Supervised training
@@ -61,6 +60,7 @@
 # *** Class balance
 # *** ROC and AUC
 # *** Feature importance
+# &&& vvv
 # ** Predict
 # *** visualize prediction
 # ** Quantify prediction
@@ -254,6 +254,7 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
         if not crs == CRS:
             raise ValueError(f"Unexpected crs for file: {f} crs: {crs}")
 
+# USER
 dir_file_enforce()
 validate_input_files()
 # for test are and for full area
@@ -331,8 +332,9 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
     return bbox_list
 
 ######### ** Create Grid
+
 # show grid that will be used later
-test = area_grid(DATA_train, show=True)
+# test = area_grid(DATA_train, show=True)
 
 ################
 # * Load EOpatch
@@ -525,6 +527,7 @@ def ask_loadgeotiffs(areas, eopatch_dir):
                                                             areas=areas,
                                                             eopatch_dir=eopatch_dir ))
 
+# USER
 ask_loadgeotiffs(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Load timestamps etc
@@ -642,8 +645,9 @@ def check_valid_geometry(gdf , show=False):
 
     return repaired_gdf
 
+# USER
 # show the repairs that will be used later
-test = check_valid_geometry(gpd.read_file(DATA_ids), show=True)
+# test = check_valid_geometry(gpd.read_file(DATA_ids), show=True)
 
 def bind_observations(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR):
     "Append table of observation data to polygons, ensure common column, then row bind on samples. Returns: fiona readable object"
@@ -745,11 +749,14 @@ def ask_loadDetails(areas, eopatch_dir):
                                                           observations=bind_observations(),
                                                               eopatch_dir=eopatch_dir))
 
+# USER
 ask_loadDetails(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Visualize layers
 #####
 # *** Object contents
+
+# USER
 eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
 eopatch
 eopatch.timestamps
@@ -826,6 +833,7 @@ def ask_preparePatches():
                                                           eopatch_out_dir=EOPATCH_SAMPLES_DIR,
                                                           trait='HEIGHT'))
 
+# USER
 ask_preparePatches()
 
 ################
@@ -1008,14 +1016,16 @@ def trainGBM(objective,
     if objective == 'multiclass':
         model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
         model.fit(x_train_GBM, y_train_GBM)
-    if objective == 'regression':
+    elif objective == 'regression':
         model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
         model.fit(x_train_GBM, y_train_GBM)
-    if objective == 'ranking':
-        model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
-        # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
-        model.fit(x_train_GBM, y_train_GBM, group=group_all)
-        # &&& retry on ranked data
+    # elif objective == 'ranking':
+        # # not tested on ranked data
+        # model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
+        # # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
+        # model.fit(x_train_GBM, y_train_GBM, group=group_all)
+    else:
+        raise ValueError("objective not recognized")
 
     # Train the model
     # Save the model
@@ -1033,12 +1043,9 @@ def ask_trainGBM():
                  x_train_GBM=x_train_GBM,
                  y_train_GBM=y_train_GBM,)
 
+# USER
 ask_trainGBM()
 
-# &&& test on regression
-# &&& vis on regression
-# &&& test on ranking
-# &&& vis on ranking
 
 ######### ** Validate
 
@@ -1075,6 +1082,7 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type, sho
         # Unlabelled data
         learn = model
         dls = learn.dls
+        valid_dl = dls.valid
         test_ds = dls.dataset.add_test(x_testSet)
         test_dl = valid_dl.new(test_ds)
         test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
@@ -1147,7 +1155,7 @@ def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_n
     r2 = metrics.r2_score(y_test, predicted_values_test)
 
     print("")
-    print(f"Metrics for: model {model_type}, target {target_name}, prediction {pred_type}")
+    print(f"Metrics for: model {model_type}, target {trait_name}, prediction {pred_type}")
     print("---------------------------------")
     print(f"Mean Squared Error (MSE): {mse:.4f}")
     print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
@@ -1263,6 +1271,7 @@ def plot_regression_results(
     ax2.set_title(f"Error Distribution: {title}", fontsize=20)
 
     plt.tight_layout()
+    plt.show()
 
 def show_regression_results(predicted_values_test,
                             y_test,
@@ -1271,16 +1280,25 @@ def show_regression_results(predicted_values_test,
                             pred_type):
     """Plots regression results"""
 
-    fig = plt.figure(figsize=(20, 10))
+    n_samples = len(y_test)
+    if n_samples > 500:
+        indices = np.random.choice(n_samples, 500, replace=False)
+        y_test_sampled = y_test[indices]
+        predicted_values_test_sampled = predicted_values_test[indices]
+        print(f"Generating plot with {len(y_test_sampled)} selected points.")
+
+    else:
+        y_test_sampled = y_test
+        predicted_values_test_sampled = predicted_values_test
+        print(f"Generating plot with all {len(y_test_sampled)} points.")
+
 
     plot_regression_results(
-        y_test,
-        predicted_values_test,
+        y_test_sampled,
+        predicted_values_test_sampled,
         ylabel="True Values",
         xlabel="Predicted Values",
         title=f"Regression Results: model {model_type}, trait {trait_name}, prediction {pred_type}")
-
-    plt.tight_layout()
 
 #####
 # *** Class balance
@@ -1386,7 +1404,6 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
     multiclass_flag = objective == 'multiclass'
 
     # get prediction data
-    # &&& integrate to  testset_predict_GBM
     if GBM_flag:
         x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=trait_name)
         predicted_test, model = predict_testSet(x_testSet=x_test_GBM, area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
@@ -1419,8 +1436,8 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             model_type=model_type,
             trait_name=trait_name,
             pred_type=objective)
+
     if (GBM_flag or TSAI_flag ) and (regression_flag):
-        # &&& untested
         report_Metrics_Regression(
             y_test=y_test,
             predicted_values_test=predicted_test,
@@ -1438,18 +1455,21 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             pred_type=objective)
 
     if (GBM_flag or TSAI_flag ) and (regression_flag):
-        # &&& untested
         show_regression_results(
             predicted_values_test=predicted_test,
+            # print(type(predicted_test)) #  <class 'numpy.ndarray'>
+            # print(predicted_test.shape) # (3370, 1)
             y_test=y_test,
+            # print(type(y_test)) # <class 'numpy.ndarray'>
+            # print(y_test.shape) # (3370,)
             trait_name=trait_name,
             model_type=model_type,
             pred_type=objective)
 
-    if (GBM_flag or TSAI_flag ) and (multiclass_flag or regression_flag):
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
         show_ClassBalance(y_train=y_train, class_names=class_names)
 
-    if (GBM_flag) and (multiclass_flag or regression_flag):
+    if (GBM_flag) and (multiclass_flag):
         show_ROCAUC(
             model_GBM=model,
             class_names=class_names,
@@ -1460,7 +1480,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             trait_name=trait_name,
             pred_type=objective)
 
-    if (GBM_flag) and (multiclass_flag or regression_flag):
+    if (GBM_flag) and (multiclass_flag):
         show_featureImportance(
             model_GBM=model,
             feature_names=feature_names,
@@ -1470,15 +1490,13 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             trait_name=trait_name,
             pred_type=objective)
 
-
-
-
 # USER
 testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
 
 ######### ** Predict
 
 # prepare eopatches for the validation area
+# USER
 test = area_grid(DATA_validate, show=True)
 ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
 ask_loadDetails(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
@@ -1582,11 +1600,13 @@ def ask_PredictPatches():
                                                            objective='multiclass',
                                                            model_type = 'GBM'))
 
+# USER
 ask_PredictPatches()
 
 #####
 # *** visualize prediction
 
+# USER
 eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 eopatch
 eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_GBM'))
@@ -1600,7 +1620,6 @@ def cartesian_from_position(position, grid_h, grid_w):
     "convert between the grid ordering of eopatches and matplotlib axes coordinates"
     # area is segmented into n=row*col sections, with origin lower left, iterating rows fast ie: for cols(for rows), numbered 0...n-1
     # plt grids are cartesian (row, col) with origin upper left
-    # &&& no safety checks
     def invertPosition(axis_pos, axis_len):
         lastPos = axis_len -1
         invertedPos = lastPos - axis_pos
@@ -1770,10 +1789,15 @@ class_names: list of str names for classes which were predicted
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
     # quantify prediction
-    report_F1Table(y_test_GBM=y_test_GBM, predicted_labels_test=predicted_labels_test, class_names=class_names, model_type=model_type, trait_name=trait_name, pred_type=objective)
+    report_Metrics_Classification(y_test=y_test_GBM,
+                                  predicted_labels_test=predicted_labels_test,
+                                  class_names=class_names,
+                                  model_type=model_type,
+                                  trait_name=trait_name,
+                                  pred_type=objective)
 
     show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
-                                   y_test_GBM=y_test_GBM,
+                                   y_test=y_test_GBM,
                                    trait_name=trait_name,
                                    class_names=class_names, model_type=model_type, pred_type=objective)
 
@@ -1786,6 +1810,7 @@ validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective=
 # * TST experiment
 ################
 
+# USER
 # test = create_TSAI_training_data(trait_name='HEIGHT', show=True)
 
 ######### ** Train
@@ -1801,7 +1826,7 @@ def trainTSAI(objective,
               splits,
               show = False
               ):
-    "&&&"
+    "Trains TSAI models"
 
     # shared setup
     batch_size = 8192 # print(math.pow(2,13))
@@ -1828,7 +1853,7 @@ def trainTSAI(objective,
         model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=.3, fc_dropout=.5)
         learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
 
-    elif objective == 'regression': # &&&
+    elif objective == 'regression':
         tfms  = [None, [TSRegression()]]
         metrics = [mae, rmse]
         loss_func = MSELossFlat()
@@ -1871,7 +1896,7 @@ def ask_trainTSAI():
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
-        trainTSAI(objective='multiclass',
+        trainTSAI(objective='regression',
                  area_name='test-area',
                  trait_name='HEIGHT',
                  model_type='TSAI',
@@ -1879,24 +1904,14 @@ def ask_trainTSAI():
                  y_train_TSAI=y_train_TSAI,
                  splits = splits)
 
+# USER
 ask_trainTSAI()
 
 ######### ** Validate
-#####
-# *** F1 etc table
-#####
-# *** Confusion matrices
-#####
-# *** Class balance
-#####
-# *** ROC and AUC
-#####
-# *** Feature importance
-
 
 # USER
 # quantify prediction
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', class_names=['black','white'])
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', class_names=['black','white'])
 
 ######### ** Predict
 #####
@@ -1911,7 +1926,7 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 #&&& ensure validation metrics are only calculated within mask for both experiments
 ######### ** Export to geotiff all for model comparison
 #####
-# *** &&&
+# *** &&& export
 # &&& use mask to set noValue areas on exported data
 
 ############################################

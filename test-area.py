@@ -61,8 +61,8 @@
 # *** ROC and AUC
 # *** Feature importance
 # ** Predict
-# &&& vvv
 # *** visualize prediction
+# &&& vvv
 # ** Quantify prediction
 # *** Visualize predicted trait
 # *** Visualize trait diff
@@ -258,9 +258,6 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
 dir_file_enforce()
 validate_input_files()
 # for test are and for full area
-# &&& 2023-09-05 potential geotransform mismatch
-# &&& 2023-07-24 Nodata value is None
-
 
 ################
 # * AOI
@@ -717,9 +714,8 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
 
     # initialize tasks or copy
     load_task = LoadTask(eopatch_dir)
-    # clean_task = RemoveFeatureTask(features=[(FeatureType.DATA_TIMELESS, 'HEIGHT')])
     add_timestamps_task = AddTimestamps()
-    make_areamask_task = MakeAreaMask(DATA_train)
+    make_areamask_task = MakeAreaMask(DATA_train) # &&& make variable
     vector_task = vector_import_task
     rasterize_task = rasterize_height_task
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
@@ -1656,7 +1652,7 @@ def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, pred_type):
         eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
         row, col = cartesian_from_position(i, grid_h, grid_w)
         ax = axs[row][col]
-        im = ax.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze())
+        im = ax.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}_{pred_type}_{model_type}"].squeeze())
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_aspect("auto")
@@ -1689,43 +1685,58 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     w_max = w_min + inspect_size
     h_min = np.random.choice(range(h - inspect_size))
     h_max = h_min + inspect_size
+    # compose identifier
+    identifier = f"PREDICTED_{trait_name}_{pred_type}_{model_type}"
+    # aoi logical mask
+    in_poly = eopatch.mask_timeless["IN_POLYGON"].squeeze()
+    mask = ~in_poly
 
     # Draw the Reference map
     fig = plt.figure(figsize=(20, 20))
     fig.suptitle(f"Model: {model_type}, Trait: {trait_name}, Prediction: {pred_type}", fontsize=24)
 
+    # trait
     ax = plt.subplot(2, 2, 1)
-    plt.imshow(eopatch.data_timeless[trait_name].squeeze()[w_min:w_max, h_min:h_max])
+    data = eopatch.data_timeless[trait_name].squeeze()
+    masked = np.ma.masked_where(mask, data)
+    plt.imshow(masked[w_min:w_max, h_min:h_max])
     plt.colorbar(label=f"{trait_name}")
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
     plt.title(f"Ground Truth: {trait_name}", fontsize=20)
 
+    #prediction
     ax = plt.subplot(2, 2, 2)
-    plt.imshow(eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze()[w_min:w_max, h_min:h_max])
+    data = eopatch.data_timeless[identifier].squeeze()
+    masked = np.ma.masked_where(mask, data)
+    plt.imshow(masked[w_min:w_max, h_min:h_max])
     plt.colorbar(label=f"{trait_name}")
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
     plt.title("Prediction", fontsize=20)
 
+    #disagreement logical
     ax = plt.subplot(2, 2, 3)
-    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze() != eopatch.data_timeless[trait_name].squeeze()
-    plt.imshow(mask[w_min:w_max, h_min:h_max], cmap="gray")
-    cbar = plt.colorbar(label="Disagreement")
-    cbar.set_ticks([0, 1])
-    cbar.set_ticklabels(["Agree", "Disagree"])
+    data = eopatch.data_timeless[identifier].squeeze() != eopatch.data_timeless[trait_name].squeeze()
+    masked = np.ma.masked_where(mask, data)
+    cmap = plt.cm.colors.ListedColormap(['green', 'red'])
+    plt.imshow(masked[w_min:w_max, h_min:h_max], cmap=cmap)
+    plt.legend([plt.Rectangle((0,0),1,1,fc='green'), plt.Rectangle((0,0),1,1,fc='red')],
+              ['Agree', 'Disagree'], loc='lower right')
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
     plt.title("Disagreement", fontsize=20)
 
+    # disagreement quantity
     ax = plt.subplot(2, 2, 4)
-    mask = eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"].squeeze() - eopatch.data_timeless[trait_name].squeeze()
-    vmax = max(abs(mask.min()), abs(mask.max()))
+    data = eopatch.data_timeless[identifier].squeeze() - eopatch.data_timeless[trait_name].squeeze()
+    masked = np.ma.masked_where(mask, data)
+    vmax = max(abs(masked.min()), abs(masked.max()))
     norm = colors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
-    plt.imshow(mask[w_min:w_max, h_min:h_max], cmap="seismic", norm=norm)
+    plt.imshow(masked[w_min:w_max, h_min:h_max], cmap="seismic", norm=norm)
     plt.colorbar(label="Difference")
     plt.xticks([])
     plt.yticks([])
@@ -1957,14 +1968,28 @@ ask_PredictPatches_TSAI()
 
 #####
 # *** visualize prediction
+
+# USER
+eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+eopatch
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI_PROBA'))
+
 ######### ** Quantify prediction
 #####
 # *** Visualize predicted trait
+
+# USER
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', pred_type='regression', areas=area_grid(DATA_validate))
+
 #####
 # *** Visualize trait diff
+
+# USER
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', pred_type="regression")
+
 #####
 # *** Quantify agreement
-#&&& ensure validation metrics are only calculated within mask for both experiments
 ######### ** Export to geotiff all for model comparison
 #####
 # *** &&& export
@@ -1973,3 +1998,4 @@ ask_PredictPatches_TSAI()
 ############################################
 
 ######
+#&&& ensure mask is set to correct area by variable

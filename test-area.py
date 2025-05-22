@@ -60,8 +60,8 @@
 # *** Class balance
 # *** ROC and AUC
 # *** Feature importance
-# &&& vvv
 # ** Predict
+# &&& vvv
 # *** visualize prediction
 # ** Quantify prediction
 # *** Visualize predicted trait
@@ -1085,6 +1085,8 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type, sho
         valid_dl = dls.valid
         test_ds = dls.dataset.add_test(x_testSet)
         test_dl = valid_dl.new(test_ds)
+        print(x_testSet.shape)
+
         test_probas, test_targets, test_preds = learn.get_preds(dl=test_dl, with_decoded=True)
         #
         # get_preds returns a tuple of three elements: (predictions, targets, decoded)
@@ -1378,9 +1380,6 @@ def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, t
     cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
     cb.ax.tick_params(labelsize=20)
 
-
-
-
 def testset_predict_validate(trait_name, area_name, objective, model_type, class_names):
     """
     collects sampled data, predicts and then reports metrics
@@ -1520,34 +1519,52 @@ class PredictPatchTask(EOTask):
         t, w, h, f = features.shape
         #make fake labels array of w,h,1
         fake_labels = np.zeros((w,h,1))
-
+        # make tsai data
         datatoTSAI = features, fake_labels
-        data_TSAI = reshape_eopatch_to_TSAI(data=datatoTSAI)
+        data_TSAI = reshape_eopatch_to_TSAI(data=datatoTSAI, show=True)
         features_TSAI, fake_labels_back = data_TSAI
-
+        # make gbm data
         data_GBM = reshape_to_GBM(data=data_TSAI)
         features_GBM, fake_labels_back = data_GBM
         del fake_labels_back
 
-
         if self.model_type == 'GBM':
-            #do GBM shaped actions
+            #get GBM prediction
             predicted_trait= self.model.predict(features_GBM)
-
+            # reshape
             predicted_trait= predicted_trait.reshape(w, h)
             predicted_trait= predicted_trait[..., np.newaxis]
             eopatch[(FeatureType.DATA_TIMELESS, self.predicted_trait_name)] = predicted_trait
-
+            # get probas
             if self.predicted_probas_name:
                 predicted_scores = self.model.predict_proba(features_GBM)
+                # reshape probas
                 _, d = predicted_scores.shape
                 predicted_scores = predicted_scores.reshape(w, h, d)
                 eopatch[(FeatureType.DATA_TIMELESS, self.predicted_probas_name)] = predicted_scores
-
+            # result
             return eopatch
         elif self.model_type == 'TSAI':
-            #do TSAI shaped actions
-            print('&&&')
+            #get TSAI prediction
+            learn = self.model
+            dls = learn.dls
+            valid_dl = dls.valid
+            test_ds = dls.dataset.add_test(features_TSAI)
+            test_dl = valid_dl.new(test_ds)
+            probas, targets, preds = learn.get_preds(dl=test_dl, with_decoded=True)
+            # reshape
+            preds_array = preds.numpy()
+            predicted_trait= preds_array.reshape(w, h)
+            predicted_trait= predicted_trait[..., np.newaxis]
+            eopatch[(FeatureType.DATA_TIMELESS, self.predicted_trait_name)] = predicted_trait
+            # reshape probas
+            if self.predicted_probas_name:
+                predicted_scores = probas.numpy()
+                _, d = predicted_scores.shape
+                predicted_scores = predicted_scores.reshape(w, h, d)
+                eopatch[(FeatureType.DATA_TIMELESS, self.predicted_probas_name)] = predicted_scores
+            # result
+            return eopatch
         else:
             raise ValueError('Model type not recognized')
 
@@ -1555,7 +1572,9 @@ def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objectiv
     "Creates a workflow to predict trait on validation eopatches. "
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
     eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
+    # drop FEATURES_TRAINING if it exists
     data_keys = sorted(list(eopatch.data.keys()))
+    data_keys = sorted(set(data_keys) - set(['FEATURES_TRAINING']))
 
     load_task = LoadTask(eopatch_dir)
 
@@ -1566,8 +1585,8 @@ def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objectiv
     predict_task = PredictPatchTask(model=model,
                                     model_type=model_type,
                                     feature=(FeatureType.DATA, "FEATURES_TRAINING"),
-                                    predicted_trait_name=f"PREDICTED_{trait_name}_{model_type}",
-                                    predicted_probas_name=f"PREDICTED_{trait_name}_{model_type}_PROBA")
+                                    predicted_trait_name=f"PREDICTED_{trait_name}_{objective}_{model_type}",
+                                    predicted_probas_name=f"PREDICTED_{trait_name}_{objective}_{model_type}_PROBA")
 
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
@@ -1589,7 +1608,7 @@ def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objectiv
 
     return workflow, execution_args
 
-def ask_PredictPatches():
+def ask_PredictPatches_GBM():
     print("predict validation area EOPatches?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
@@ -1601,7 +1620,7 @@ def ask_PredictPatches():
                                                            model_type = 'GBM'))
 
 # USER
-ask_PredictPatches()
+ask_PredictPatches_GBM()
 
 #####
 # *** visualize prediction
@@ -1908,12 +1927,34 @@ def ask_trainTSAI():
 ask_trainTSAI()
 
 ######### ** Validate
+# quantify prediction
 
 # USER
-# quantify prediction
 testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', class_names=['black','white'])
 
 ######### ** Predict
+
+# prepare eopatches for the validation area
+test = area_grid(DATA_validate, show=True)
+ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+ask_loadDetails(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+eopatch
+
+def ask_PredictPatches_TSAI():
+    print("predict validation area EOPatches?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                           area_name='test-area',
+                                                           trait_name='HEIGHT',
+                                                           objective='regression',
+                                                           model_type = 'TSAI'))
+
+# USER
+ask_PredictPatches_TSAI()
+
 #####
 # *** visualize prediction
 ######### ** Quantify prediction

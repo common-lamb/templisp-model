@@ -673,7 +673,7 @@ def bind_observations(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR)
     merged_gdf.to_file(abs_path, driver='GPKG', layer='name')
     return abs_path
 
-def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
+def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     """
     Creates a workflow to add dates, masks, rasterized observation data to eopatches.
     Args:
@@ -715,7 +715,7 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
     # initialize tasks or copy
     load_task = LoadTask(eopatch_dir)
     add_timestamps_task = AddTimestamps()
-    make_areamask_task = MakeAreaMask(DATA_train) # &&& make variable
+    make_areamask_task = MakeAreaMask(mask_file)
     vector_task = vector_import_task
     rasterize_task = rasterize_height_task
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
@@ -737,16 +737,17 @@ def CreateDetailsLoaderWorkflow(areas, observations, eopatch_dir):
 
     return workflow, execution_args
 
-def ask_loadDetails(areas, eopatch_dir):
+def ask_loadDetails(areas, mask_file, eopatch_dir):
     print("Load masks and timestamps to the patches after the gtiff stacks")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         execute_prepared_workflow(CreateDetailsLoaderWorkflow(areas=areas,
-                                                          observations=bind_observations(),
+                                                              observations=bind_observations(),
+                                                              mask_file=mask_file,
                                                               eopatch_dir=eopatch_dir))
 
 # USER
-ask_loadDetails(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
+ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Visualize layers
 #####
@@ -1490,11 +1491,11 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 
 ######### ** Predict
 
-# prepare eopatches for the validation area
+# GBM, prepare eopatches for the validation area
 # USER
 test = area_grid(DATA_validate, show=True)
 ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
-ask_loadDetails(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 eopatch
 
@@ -1945,10 +1946,10 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 
 ######### ** Predict
 
-# prepare eopatches for the validation area
+# TSAI overwrites GBM prepare eopatches for the validation area, may not be needed
 test = area_grid(DATA_validate, show=True)
 ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
-ask_loadDetails(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 eopatch
 
@@ -1996,6 +1997,3 @@ plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspe
 # &&& use mask to set noValue areas on exported data
 
 ############################################
-
-######
-#&&& ensure mask is set to correct area by variable

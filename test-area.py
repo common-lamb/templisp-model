@@ -85,6 +85,7 @@ import datetime
 import pandas as pd
 import numpy as np
 import rasterio
+from rasterio.merge import merge
 import geopandas as gpd
 from osgeo import gdal
 import matplotlib.pyplot as plt
@@ -1722,10 +1723,10 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     ax = plt.subplot(2, 2, 3)
     data = eopatch.data_timeless[identifier].squeeze() != eopatch.data_timeless[trait_name].squeeze()
     masked = np.ma.masked_where(mask, data)
-    cmap = plt.cm.colors.ListedColormap(['green', 'red'])
+    cmap = plt.cm.colors.ListedColormap(['red', 'green'])
     plt.imshow(masked[w_min:w_max, h_min:h_max], cmap=cmap)
-    plt.legend([plt.Rectangle((0,0),1,1,fc='green'), plt.Rectangle((0,0),1,1,fc='red')],
-              ['Agree', 'Disagree'], loc='lower right')
+    plt.legend([plt.Rectangle((0,0),1,1,fc='red'), plt.Rectangle((0,0),1,1,fc='green')],
+              ['Disagree', 'Agree'], loc='lower right')
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
@@ -1990,10 +1991,107 @@ plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI'
 plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', pred_type="regression")
 
 #####
-# *** Quantify agreement
+# *** Quantify agreement &&&
+
 ######### ** Export to geotiff all for model comparison
+
 #####
-# *** &&& export
+# *** export
+
+def CreateExportWorkflow(areas, eopatch_dir, trait_name, objective, model_type):
+    "Creates a workflow to export trait and prediction of validation eopatches. "
+
+    tiff_location = RESULTS_DIR
+    # set data timeless identifier, for prediction case and trait only case
+    identifier = f"PREDICTED_{trait_name}_{objective}_{model_type}"
+    if objective == None and model_type == None:
+        identifier = f"{trait_name}"
+
+    # test if identifier is in the layers, else print layers
+    eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
+    data_keys = sorted(list(eopatch.data_timeless.keys()))
+    # &&&
+
+    # mask outside of poly
+    # &&&
+
+    load_task = LoadTask(eopatch_dir)
+    export_task = ExportToTiffTask((FeatureType.DATA_TIMELESS, identifier), tiff_location)
+
+    # node list
+    workflow_nodes = linearly_connect_tasks(load_task, export_task)
+    # workflow
+    workflow = EOWorkflow(workflow_nodes)
+
+    # additional arguments
+    execution_args = []
+    for idx, bbox in enumerate(areas):
+        execution_args.append(
+            {
+                workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"}, # load task is first
+                workflow_nodes[-1]: {"filename": f"{tiff_location}/{identifier}_eopatch_{idx}.tiff"} # export task is last
+            }
+        )
+
+    return workflow, execution_args
+
+def merge_exports(trait_name, objective, model_type):
+    # at this point is  it is known that there are multiple files on disk ending like ...eopatch_1.tiff
+
+    # set data timeless identifier, for prediction case and trait only case
+    identifier = f"PREDICTED_{trait_name}_{objective}_{model_type}"
+    if objective == None and model_type == None:
+        identifier = f"{trait_name}"
+
+    input_files = glob.glob(f"{RESULTS_DIR}/{identifier}_eopatch_*.tiff")
+    output_file = f"{RESULTS_DIR}/{identifier}.tiff"
+
+    src_files = [rasterio.open(f) for f in input_files]
+    mosaic, out_trans = merge(src_files)
+    out_meta = src_files[0].meta.copy()
+    out_meta.update({
+        "driver": "GTiff",
+        "height": mosaic.shape[1],
+        "width": mosaic.shape[2],
+        "transform": out_trans,
+        "compress": "lzw"  # Add LZW compression &&&
+    })
+
+    with rasterio.open(output_file, "w", **out_meta) as dest:
+        dest.write(mosaic)
+
+    for src in src_files:
+        src.close()
+    # &&& remove input_files
+
+
+def ask_ExportPatches():
+
+    trait_name = 'HEIGHT' # must be provided
+    # both can be None to export only trait map
+    objective = 'regression'
+    model_type = 'TSAI'
+
+    print("export predictions?")
+    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if proceed:
+        execute_prepared_workflow(CreateExportWorkflow(areas=area_grid(DATA_validate),
+                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                           trait_name=trait_name,
+                                                           objective=objective,
+                                                           model_type =model_type))
+
+        merge_exports(trait_name=trait_name,
+                      objective=objective,
+                      model_type =model_type)
+
+# USER
+ask_ExportPatches()
+
+
 # &&& use mask to set noValue areas on exported data
 
 ############################################
+
+# TODO do complete run of both models in regression and categorization
+# TODO clean up visualizations

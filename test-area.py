@@ -62,10 +62,10 @@
 # *** Feature importance
 # ** Predict
 # *** visualize prediction
-# &&& vvv
 # ** Quantify prediction
 # *** Visualize predicted trait
 # *** Visualize trait diff
+# &&& vvv
 # *** Quantify agreement
 
 ################
@@ -1998,6 +1998,20 @@ plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspe
 #####
 # *** export
 
+class MaskTask(EOTask):
+    "Uses in_polygon layer to mask a target prediction. Arg: the layer to mask"
+    def __init__(self, ident):
+        self.ident = ident
+
+    def execute(self, eopatch):
+        in_poly = eopatch.mask_timeless["IN_POLYGON"].squeeze()
+        mask = ~in_poly
+        data = eopatch.data_timeless[self.ident].squeeze()
+        masked = np.ma.masked_where(mask, data)
+        mask3d = masked[..., np.newaxis] # add d for (w*h*1)
+        eopatch[FeatureType.DATA_TIMELESS, f"{self.ident}_masked"] = mask3d
+        return eopatch
+
 def CreateExportWorkflow(areas, eopatch_dir, trait_name, objective, model_type):
     "Creates a workflow to export trait and prediction of validation eopatches. "
 
@@ -2010,16 +2024,17 @@ def CreateExportWorkflow(areas, eopatch_dir, trait_name, objective, model_type):
     # test if identifier is in the layers, else print layers
     eopatch = EOPatch.load(os.path.join(eopatch_dir, 'eopatch_0'))
     data_keys = sorted(list(eopatch.data_timeless.keys()))
-    # &&&
-
-    # mask outside of poly
-    # &&&
+    if not identifier in data_keys:
+        raise ValueError(f" identifier ({identifier}) not found in data_keys ({data_keys})")
 
     load_task = LoadTask(eopatch_dir)
-    export_task = ExportToTiffTask((FeatureType.DATA_TIMELESS, identifier), tiff_location)
+    # mask outside of poly
+    mask_task = MaskTask(identifier)
+    # &&& use mask to set noValue areas on exported data
+    export_task = ExportToTiffTask((FeatureType.DATA_TIMELESS, f"{identifier}_masked"), tiff_location)
 
     # node list
-    workflow_nodes = linearly_connect_tasks(load_task, export_task)
+    workflow_nodes = linearly_connect_tasks(load_task, mask_task, export_task)
     # workflow
     workflow = EOWorkflow(workflow_nodes)
 
@@ -2054,7 +2069,7 @@ def merge_exports(trait_name, objective, model_type):
         "height": mosaic.shape[1],
         "width": mosaic.shape[2],
         "transform": out_trans,
-        "compress": "lzw"  # Add LZW compression &&&
+        "compress": "lzw"
     })
 
     with rasterio.open(output_file, "w", **out_meta) as dest:
@@ -2062,15 +2077,19 @@ def merge_exports(trait_name, objective, model_type):
 
     for src in src_files:
         src.close()
-    # &&& remove input_files
+    for f in input_files:
+        os.remove(f)
 
 
 def ask_ExportPatches():
 
     trait_name = 'HEIGHT' # must be provided
-    # both can be None to export only trait map
     objective = 'regression'
     model_type = 'TSAI'
+
+    # both can be None to export only trait map
+    # objective = None
+    # model_type = None
 
     print("export predictions?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
@@ -2080,7 +2099,6 @@ def ask_ExportPatches():
                                                            trait_name=trait_name,
                                                            objective=objective,
                                                            model_type =model_type))
-
         merge_exports(trait_name=trait_name,
                       objective=objective,
                       model_type =model_type)
@@ -2089,7 +2107,6 @@ def ask_ExportPatches():
 ask_ExportPatches()
 
 
-# &&& use mask to set noValue areas on exported data
 
 ############################################
 

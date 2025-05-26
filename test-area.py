@@ -2008,8 +2008,11 @@ class MaskTask(EOTask):
         mask = ~in_poly
         data = eopatch.data_timeless[self.ident].squeeze()
         masked = np.ma.masked_where(mask, data)
-        mask3d = masked[..., np.newaxis] # add d for (w*h*1)
-        eopatch[FeatureType.DATA_TIMELESS, f"{self.ident}_masked"] = mask3d
+
+        no_data_value = -9999
+        filled = masked.filled(no_data_value)
+        fill3d = filled[..., np.newaxis] # add d for (w*h*1)
+        eopatch[FeatureType.DATA_TIMELESS, f"{self.ident}_masked"] = fill3d
         return eopatch
 
 def CreateExportWorkflow(areas, eopatch_dir, trait_name, objective, model_type):
@@ -2064,8 +2067,10 @@ def merge_exports(trait_name, objective, model_type):
     src_files = [rasterio.open(f) for f in input_files]
     mosaic, out_trans = merge(src_files)
     out_meta = src_files[0].meta.copy()
+    no_data_value = -9999
     out_meta.update({
         "driver": "GTiff",
+        "nodata": no_data_value,
         "height": mosaic.shape[1],
         "width": mosaic.shape[2],
         "transform": out_trans,

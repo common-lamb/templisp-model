@@ -1248,6 +1248,7 @@ def plot_regression_results(
     """
     Plots regression results including a scatter plot and error histogram.
     """
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
 
     # Scatter plot
@@ -1291,7 +1292,6 @@ def show_regression_results(predicted_values_test,
         y_test_sampled = y_test
         predicted_values_test_sampled = predicted_values_test
         print(f"Generating plot with all {len(y_test_sampled)} points.")
-
 
     plot_regression_results(
         y_test_sampled,
@@ -1494,11 +1494,12 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 
 # GBM, prepare eopatches for the validation area
 # USER
-test = area_grid(DATA_validate, show=True)
+# test = area_grid(DATA_validate, show=True)
 ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
 ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 eopatch
+eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
 
 class PredictPatchTask(EOTask):
     """
@@ -1519,7 +1520,7 @@ class PredictPatchTask(EOTask):
         fake_labels = np.zeros((w,h,1))
         # make tsai data
         datatoTSAI = features, fake_labels
-        data_TSAI = reshape_eopatch_to_TSAI(data=datatoTSAI, show=True)
+        data_TSAI = reshape_eopatch_to_TSAI(data=datatoTSAI, show=False)
         features_TSAI, fake_labels_back = data_TSAI
         # make gbm data
         data_GBM = reshape_to_GBM(data=data_TSAI)
@@ -1626,8 +1627,8 @@ ask_PredictPatches_GBM()
 # USER
 eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 eopatch
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_GBM'))
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_GBM_PROBA'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM'))
+eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM_PROBA'))
 
 ######### ** Quantify prediction
 #####
@@ -1668,7 +1669,7 @@ def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, pred_type):
     plt.show()
 
 # USER
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', pred_type='categorical', areas=area_grid(DATA_validate))
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', pred_type='multiclass', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
@@ -1723,7 +1724,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     ax = plt.subplot(2, 2, 3)
     data = eopatch.data_timeless[identifier].squeeze() != eopatch.data_timeless[trait_name].squeeze()
     masked = np.ma.masked_where(mask, data)
-    cmap = plt.cm.colors.ListedColormap(['red', 'green'])
+    cmap = plt.cm.colors.ListedColormap(['green', 'red'])
     plt.imshow(masked[w_min:w_max, h_min:h_max], cmap=cmap)
     plt.legend([plt.Rectangle((0,0),1,1,fc='red'), plt.Rectangle((0,0),1,1,fc='green')],
               ['Disagree', 'Agree'], loc='lower right')
@@ -1749,11 +1750,11 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
 # USER
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', pred_type="categorical")
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', pred_type="multiclass")
 
 #####
 # *** Quantify agreement
-def predictedData(areas, eopatch_samples_dir, trait_name, model_type, show=False):
+def predictedData(areas, eopatch_samples_dir, trait_name, objective, model_type, show=False):
     """
     Takes grid of areas, a source of eopatches, and a single trait.
     Concatenates all then Returns features and trait and prediction
@@ -1766,7 +1767,7 @@ def predictedData(areas, eopatch_samples_dir, trait_name, model_type, show=False
 
     features = np.concatenate([eopatch.data["FEATURES_TRAINING"] for eopatch in sampled_eopatches], axis=1)
     labels = np.concatenate([eopatch.data_timeless[f"{trait_name}"] for eopatch in sampled_eopatches], axis=0)
-    predicted_labels = np.concatenate([eopatch.data_timeless[f"PREDICTED_{trait_name}_{model_type}"] for eopatch in sampled_eopatches], axis=0)
+    predicted_labels = np.concatenate([eopatch.data_timeless[f"PREDICTED_{trait_name}_{objective}_{model_type}"] for eopatch in sampled_eopatches], axis=0)
 
     if show:
         print("predicted data:")
@@ -1776,7 +1777,7 @@ def predictedData(areas, eopatch_samples_dir, trait_name, model_type, show=False
 
     return features, labels, predicted_labels
 
-def create_GBM_validation_data(trait_name, model_type, show=False):
+def create_GBM_validation_data(trait_name, objective, model_type, show=False):
     """
     extract a trait and its prediction from eopatches for metrics
     """
@@ -1784,6 +1785,7 @@ def create_GBM_validation_data(trait_name, model_type, show=False):
         areas=area_grid(DATA_validate),
         eopatch_samples_dir=EOPATCH_VALIDATE_DIR,
         model_type=model_type,
+        objective=objective,
         trait_name=trait_name)
     #make and reshape two sets so labels and predictions get equivalent treatment
     fl = features, labels
@@ -1817,7 +1819,7 @@ class_names: list of str names for classes which were predicted
     """
 
     # get prediction data
-    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name, model_type)
+    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name=trait_name, objective=objective, model_type=model_type)
     model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
 
     # quantify prediction
@@ -1947,12 +1949,18 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 
 ######### ** Predict
 
-# TSAI overwrites GBM prepare eopatches for the validation area, may not be needed
-test = area_grid(DATA_validate, show=True)
-ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
-ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
-eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-eopatch
+# USER
+# show validation area segmentation
+# test = area_grid(DATA_validate, show=True)
+
+# Prepare eopatches for the TSAI validation area
+# TSAI overwrites GBM, may be needed, &&& proceeding without this
+# eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+# eopatch
+# ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+# ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
+# eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+# eopatch
 
 def ask_PredictPatches_TSAI():
     print("predict validation area EOPatches?")
@@ -2033,7 +2041,6 @@ def CreateExportWorkflow(areas, eopatch_dir, trait_name, objective, model_type):
     load_task = LoadTask(eopatch_dir)
     # mask outside of poly
     mask_task = MaskTask(identifier)
-    # &&& use mask to set noValue areas on exported data
     export_task = ExportToTiffTask((FeatureType.DATA_TIMELESS, f"{identifier}_masked"), tiff_location)
 
     # node list
@@ -2065,7 +2072,7 @@ def merge_exports(trait_name, objective, model_type):
     output_file = f"{RESULTS_DIR}/{identifier}.tiff"
 
     src_files = [rasterio.open(f) for f in input_files]
-    mosaic, out_trans = merge(src_files)
+    mosaic, out_trans = rasterio.merge.merge(src_files)
     out_meta = src_files[0].meta.copy()
     no_data_value = -9999
     out_meta.update({

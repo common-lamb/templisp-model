@@ -65,7 +65,6 @@
 # ** Quantify prediction
 # *** Visualize predicted trait
 # *** Visualize trait diff
-# &&& vvv
 # *** Quantify agreement
 
 ################
@@ -1106,7 +1105,8 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type, sho
 
 def report_Metrics_Classification(y_test, predicted_labels_test, class_names, model_type, trait_name, pred_type):
 
-    class_labels_float = np.unique(y_test)
+    class_labels_drop = y_test[~np.isnan(y_test)]
+    class_labels_float = np.unique(class_labels_drop)
     class_labels = [int(x) for x in class_labels_float]
 
     #handle unexpected class names
@@ -1115,6 +1115,7 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
         print(f"expected: n: {len(class_names)} class names: {class_names} ")
         print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
         class_names = class_labels
+
 
     mask = np.in1d(predicted_labels_test, y_test)
     predictions = predicted_labels_test[mask]
@@ -1147,6 +1148,11 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
 
 
 def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_name, pred_type):
+
+    # drop values from both where nan
+    mask = ~np.isnan(y_test)
+    y_test = y_test[mask]
+    predicted_values_test = predicted_values_test[mask]
 
     # Calculate metrics
     mse = metrics.mean_squared_error(y_test, predicted_values_test)
@@ -1209,19 +1215,30 @@ def show_std_T_confusionMatrix(predicted_labels_test,
                                class_names):
     "plots standard and transposed confusion matrix"
 
+    # keep the arrays where prediction values are in the test set
     mask = np.in1d(predicted_labels_test, y_test)
     predictions = predicted_labels_test[mask]
     true_labels = y_test[mask]
 
-    class_labels_float = np.unique(y_test)
+    # get unique labels from the test set
+    class_labels_drop = y_test[~np.isnan(y_test)]
+    class_labels_float = np.unique(class_labels_drop)
     class_labels = [int(x) for x in class_labels_float]
+
+    if len(class_names) != len(class_labels):
+        #handle unexpected num of class names
+        print("Alert: unexpected length of class labels. setting class names to be found values")
+        print(f"expected: n: {len(class_names)} class names: {class_names} ")
+        print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
+        class_names = class_labels
+
 
     fig = plt.figure(figsize=(20, 20))
 
     plt.subplot(1, 2, 1)
     plot_confusion_matrix(
         metrics.confusion_matrix(true_labels, predictions),
-        classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
+        classes=class_names,
         normalize=True,
         ylabel="Ground Truth",
         xlabel="Predicted",
@@ -1230,14 +1247,14 @@ def show_std_T_confusionMatrix(predicted_labels_test,
     plt.subplot(1, 2, 2)
     plot_confusion_matrix(
         metrics.confusion_matrix(predictions, true_labels),
-        classes=[name for idx, name in enumerate(class_names) if idx in class_labels],
+        classes=class_names,
         normalize=True,
         xlabel="Ground Truth",
         ylabel="Predicted",
         title=f"Transposed Confusion matrix: model {model_type}, trait {trait_name}, prediction {pred_type}")
 
     plt.tight_layout()
-
+    plt.show()
 
 def plot_regression_results(
     y_true,
@@ -1280,6 +1297,11 @@ def show_regression_results(predicted_values_test,
                             model_type,
                             pred_type):
     """Plots regression results"""
+
+    # drop values from both where nan
+    mask = ~np.isnan(y_test)
+    y_test = y_test[mask]
+    predicted_values_test = predicted_values_test[mask]
 
     n_samples = len(y_test)
     if n_samples > 500:
@@ -1769,15 +1791,26 @@ def predictedData(areas, eopatch_samples_dir, trait_name, objective, model_type,
     labels = np.concatenate([eopatch.data_timeless[f"{trait_name}"] for eopatch in sampled_eopatches], axis=0)
     predicted_labels = np.concatenate([eopatch.data_timeless[f"PREDICTED_{trait_name}_{objective}_{model_type}"] for eopatch in sampled_eopatches], axis=0)
 
+    in_poly = np.concatenate([eopatch.mask_timeless["IN_POLYGON"] for eopatch in sampled_eopatches], axis=0)
+    mask = ~in_poly
+    masked_labels = np.ma.masked_where(mask, labels)
+    masked_predicted_labels = np.ma.masked_where(mask, predicted_labels)
+
+    expanded_mask = np.expand_dims(mask, axis=0)
+    expanded_mask = np.repeat(expanded_mask, features.shape[0], axis=0)
+    expanded_mask = np.repeat(expanded_mask, features.shape[-1], axis=-1)
+    masked_features = np.ma.masked_where(expanded_mask, features)
+
     if show:
         print("predicted data:")
-        print(f"features.shape: {features.shape}")
-        print(f"labels.shape: {labels.shape}")
-        print(f"predicted labels.shape: {predicted_labels.shape}")
+        print(f"features.shape: {masked_features.shape}")
+        print(f"labels.shape: {masked_labels.shape}")
+        print(f"predicted labels.shape: {masked_predicted_labels.shape}")
 
-    return features, labels, predicted_labels
+    # return features, labels, predicted_labels
+    return masked_features, masked_labels, masked_predicted_labels
 
-def create_GBM_validation_data(trait_name, objective, model_type, show=False):
+def create_validation_data(trait_name, objective, model_type, show=False):
     """
     extract a trait and its prediction from eopatches for metrics
     """
@@ -1807,7 +1840,7 @@ def create_GBM_validation_data(trait_name, objective, model_type, show=False):
         print(f"y_pred: {y_pred.shape}")
     return data
 
-def validationset_metrics_GBM(trait_name, area_name, objective, model_type, class_names):
+def validationset_metrics(trait_name, area_name, objective, model_type, class_names):
     """
     collects predicted data,  reports metrics
 
@@ -1819,26 +1852,66 @@ class_names: list of str names for classes which were predicted
     """
 
     # get prediction data
-    x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM, predicted_labels_test  = create_GBM_validation_data(trait_name=trait_name, objective=objective, model_type=model_type)
-    model = loadModel(area_name=area_name, trait_name=trait_name, objective=objective, model_type=model_type)
+    x_train, y_train, x_test, y_test, predicted_test  = create_validation_data(trait_name=trait_name, objective=objective, model_type=model_type)
+
+    # deal with masked values in validation data: y_test, predicted_labels_test
+    predicted_test = predicted_test.filled(np.nan)
+    y_test = y_test.filled(np.nan)
 
     # quantify prediction
-    report_Metrics_Classification(y_test=y_test_GBM,
-                                  predicted_labels_test=predicted_labels_test,
-                                  class_names=class_names,
-                                  model_type=model_type,
-                                  trait_name=trait_name,
-                                  pred_type=objective)
+    GBM_flag = model_type == 'GBM'
+    TSAI_flag = model_type == 'TSAI'
+    regression_flag = objective == 'regression'
+    multiclass_flag = objective == 'multiclass'
 
-    show_std_T_confusionMatrix(predicted_labels_test=predicted_labels_test,
-                                   y_test=y_test_GBM,
-                                   trait_name=trait_name,
-                                   class_names=class_names, model_type=model_type, pred_type=objective)
 
-    # show_ROCAUC(model=model, class_names=class_names, y_test_GBM=y_test_GBM, y_train_GBM=y_train_GBM, x_test_GBM=x_test_GBM, model_type=model_type, trait_name=trait_name, pred_type=objective)
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
+        report_Metrics_Classification(
+            y_test=y_test,
+            predicted_labels_test=predicted_test,
+            class_names=class_names,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (regression_flag):
+        report_Metrics_Regression(
+            y_test=y_test,
+            predicted_values_test=predicted_test,
+            model_type=model_type,
+            trait_name=trait_name,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
+        show_std_T_confusionMatrix(
+            predicted_labels_test=predicted_test,
+            y_test=y_test,
+            trait_name=trait_name,
+            class_names=class_names,
+            model_type=model_type,
+            pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (regression_flag):
+        show_regression_results(
+            predicted_values_test=predicted_test,
+            y_test=y_test,
+            trait_name=trait_name,
+            model_type=model_type,
+            pred_type=objective)
+
+    # if (GBM_flag) and (multiclass_flag):
+    #     show_ROCAUC(
+    #         model_GBM=model,
+    #         class_names=class_names,
+    #         y_test_GBM=y_test,
+    #         y_train_GBM=y_train,
+    #         x_test_GBM=x_test,
+    #         model_type=model_type,
+    #         trait_name=trait_name,
+    #         pred_type=objective)
 
 # USER
-validationset_metrics_GBM(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
 
 ################
 # * TST experiment
@@ -1954,7 +2027,7 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 # test = area_grid(DATA_validate, show=True)
 
 # Prepare eopatches for the TSAI validation area
-# TSAI overwrites GBM, may be needed, &&& proceeding without this
+# TSAI overwrites GBM, may be needed, currently proceeding without this
 # eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
 # eopatch
 # ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
@@ -1999,7 +2072,9 @@ plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI'
 plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', pred_type="regression")
 
 #####
-# *** Quantify agreement &&&
+# *** Quantify agreement
+# USER
+validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', class_names=['black','white', 'secret third thing'])
 
 ######### ** Export to geotiff all for model comparison
 

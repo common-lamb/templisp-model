@@ -84,7 +84,6 @@ import datetime
 import pandas as pd
 import numpy as np
 import rasterio
-from rasterio.merge import merge
 import geopandas as gpd
 from osgeo import gdal
 import matplotlib.pyplot as plt
@@ -153,6 +152,8 @@ USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spect
 
 SAMPLE_RATE = 0.10 # percentage of eopatches sampled for training. in (0.0-1.0)
 TEST_PERCENTAGE = 0.20 # perventage of test-train set to use for testing. in (0.0-1.0)
+
+NO_DATA_VALUE = -9999 #used for export, ensure no collision with expected data
 
 ######### ** Input validation
 def dir_file_enforce():
@@ -330,6 +331,7 @@ def area_grid(area, grid_size=GRID_SIZE, resolution=RESOLUTION, show=False):
 
 ######### ** Create Grid
 
+# USER
 # show grid that will be used later
 # test = area_grid(DATA_train, show=True)
 
@@ -704,6 +706,8 @@ def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     we know height is valid for test area
     '''
 
+    # USER
+    # add more rasterization tasks as needed
     rasterize_height_task = VectorToRasterTask(
         vector_feature, # as used in vector import task
         (FeatureType.DATA_TIMELESS, "HEIGHT"), #name of rasterized new layer, DATA floats
@@ -753,23 +757,28 @@ ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=E
 #####
 # *** Object contents
 
+def verify_eopatch_loaded():
+
+    eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
+    eopatch
+
+    print(f"timestamps: {eopatch.timestamps}")
+    data_keys = sorted(list(eopatch.data.keys()))
+    print(f"data_keys: {data_keys}")
+
+    #####
+    # *** RGB per time
+    eopatch.plot((FeatureType.DATA, data_keys[-1])) # all across time axis of one feature, high range can make features look "flattened"
+
+    #####
+    # *** Reference identities map
+    eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON')) # the aoi masking polygon
+
+    # *** Rasterized observations
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT')) # trait raster
+
 # USER
-eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
-eopatch
-eopatch.timestamps
-data_keys = sorted(list(eopatch.data.keys()))
-data_keys
-
-#####
-# *** RGB per time
-eopatch.plot((FeatureType.DATA, data_keys[-1]))
-
-#####
-# *** Reference identities map
-eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
-
-# *** Rasterized observations
-eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT'))
+verify_eopatch_loaded()
 
 ################
 # * Prepare eopatch
@@ -1514,14 +1523,20 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 
 ######### ** Predict
 
-# GBM, prepare eopatches for the validation area
 # USER
 # test = area_grid(DATA_validate, show=True)
+# prepare eopatches for the validation area
 ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
 ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
-eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-eopatch
-eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
+
+def verify_validation_eopatch():
+    ""
+    eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+    eopatch
+
+    eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
+
+verify_validation_eopatch()
 
 class PredictPatchTask(EOTask):
     """
@@ -1646,11 +1661,14 @@ ask_PredictPatches_GBM()
 #####
 # *** visualize prediction
 
+def verify_predictions_GBM():
+    eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+    eopatch
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM_PROBA'))
+
 # USER
-eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-eopatch
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM'))
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM_PROBA'))
+verify_predictions_GBM()
 
 ######### ** Quantify prediction
 #####
@@ -1899,17 +1917,6 @@ class_names: list of str names for classes which were predicted
             model_type=model_type,
             pred_type=objective)
 
-    # if (GBM_flag) and (multiclass_flag):
-    #     show_ROCAUC(
-    #         model_GBM=model,
-    #         class_names=class_names,
-    #         y_test_GBM=y_test,
-    #         y_train_GBM=y_train,
-    #         x_test_GBM=x_test,
-    #         model_type=model_type,
-    #         trait_name=trait_name,
-    #         pred_type=objective)
-
 # USER
 validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
 
@@ -2052,11 +2059,15 @@ ask_PredictPatches_TSAI()
 #####
 # *** visualize prediction
 
+def verify_predictions_TSAI():
+    ""
+    eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
+    eopatch
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI_PROBA'))
+
 # USER
-eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-eopatch
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI'))
-eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI_PROBA'))
+verify_predictions_TSAI()
 
 ######### ** Quantify prediction
 #####
@@ -2087,12 +2098,14 @@ class MaskTask(EOTask):
         self.ident = ident
 
     def execute(self, eopatch):
+
+        no_data_value = NO_DATA_VALUE
+
         in_poly = eopatch.mask_timeless["IN_POLYGON"].squeeze()
         mask = ~in_poly
         data = eopatch.data_timeless[self.ident].squeeze()
         masked = np.ma.masked_where(mask, data)
 
-        no_data_value = -9999
         filled = masked.filled(no_data_value)
         fill3d = filled[..., np.newaxis] # add d for (w*h*1)
         eopatch[FeatureType.DATA_TIMELESS, f"{self.ident}_masked"] = fill3d
@@ -2138,6 +2151,8 @@ def CreateExportWorkflow(areas, eopatch_dir, trait_name, objective, model_type):
 def merge_exports(trait_name, objective, model_type):
     # at this point is  it is known that there are multiple files on disk ending like ...eopatch_1.tiff
 
+    no_data_value = NO_DATA_VALUE
+
     # set data timeless identifier, for prediction case and trait only case
     identifier = f"PREDICTED_{trait_name}_{objective}_{model_type}"
     if objective == None and model_type == None:
@@ -2149,7 +2164,6 @@ def merge_exports(trait_name, objective, model_type):
     src_files = [rasterio.open(f) for f in input_files]
     mosaic, out_trans = rasterio.merge.merge(src_files)
     out_meta = src_files[0].meta.copy()
-    no_data_value = -9999
     out_meta.update({
         "driver": "GTiff",
         "nodata": no_data_value,
@@ -2193,9 +2207,7 @@ def ask_ExportPatches():
 # USER
 ask_ExportPatches()
 
+############################################ Fin
 
-
-############################################
-
-# TODO do complete run of both models in regression and categorization
 # TODO clean up visualizations
+# TODO do complete run of both models in regression and categorization

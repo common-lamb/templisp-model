@@ -77,6 +77,7 @@ import pathlib
 import glob
 import re
 from copy import deepcopy
+from geopandas.plotting import plot_dataframe
 import joblib
 import itertools
 import datetime
@@ -258,7 +259,6 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
 # USER
 dir_file_enforce()
 validate_input_files()
-# for test are and for full area
 
 ################
 # * AOI
@@ -1140,7 +1140,7 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
     precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
 
     print("")
-    print (f"Metrics for: model {model_type}, trait {trait_name}, prediction {pred_type}")
+    print (f"Classification Metrics\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}")
     print("---------------------------------")
     print("Classification accuracy {:.1f}%".format(100 * accuracy))
     print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
@@ -1154,7 +1154,6 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
         print("         * {0:20s} = {1:2.1f} |  {2:2.1f}  | {3:2.1f}".format(*line_data))
     print("         --------------------------------------------------")
     print("")
-
 
 def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_name, pred_type):
 
@@ -1170,7 +1169,7 @@ def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_n
     r2 = metrics.r2_score(y_test, predicted_values_test)
 
     print("")
-    print(f"Metrics for: model {model_type}, target {trait_name}, prediction {pred_type}")
+    print(f"Regression Metrics\nmodel: {model_type}, target: {trait_name}, prediction: {pred_type}")
     print("---------------------------------")
     print(f"Mean Squared Error (MSE): {mse:.4f}")
     print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
@@ -1181,13 +1180,7 @@ def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_n
 #####
 # *** Confusion matrices
 
-def plot_confusion_matrix(
-    confusion_matrix,
-    classes,
-    title,
-    normalize=False,
-    ylabel="True label",
-    xlabel="Predicted label"):
+def plot_confusion_matrix(confusion_matrix, classes, title, normalize=False, ylabel="True label", xlabel="Predicted label"):
     """
     prints and plots one confusion matrix.
     Normalization can be applied by setting `normalize=True`.
@@ -1201,8 +1194,8 @@ def plot_confusion_matrix(
     plt.imshow(confusion_matrix, interpolation="nearest", cmap=plt.cm.Blues, vmin=0, vmax=1)
     plt.title(title, fontsize=20)
     tick_marks = np.arange(len(classes))
-    plt.xticks(tick_marks, classes, rotation=90, fontsize=20)
-    plt.yticks(tick_marks, classes, fontsize=20)
+    plt.xticks(tick_marks, classes, rotation=90, fontsize=15)
+    plt.yticks(tick_marks, classes, fontsize=15)
 
     threshold = confusion_matrix.max() / 2.0
     for i, j in itertools.product(range(confusion_matrix.shape[0]), range(confusion_matrix.shape[1])):
@@ -1213,8 +1206,8 @@ def plot_confusion_matrix(
             fontsize=12,
         )
     plt.tight_layout()
-    plt.ylabel(ylabel, fontsize=20)
-    plt.xlabel(xlabel, fontsize=20)
+    plt.ylabel(ylabel, fontsize=15)
+    plt.xlabel(xlabel, fontsize=15)
 
 def show_std_T_confusionMatrix(predicted_labels_test,
                                y_test,
@@ -1224,7 +1217,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
                                class_names):
     "plots standard and transposed confusion matrix"
 
-    # keep the arrays where prediction values are in the test set
+    # keep the array locations only where prediction set values are in the test set values
     mask = np.in1d(predicted_labels_test, y_test)
     predictions = predicted_labels_test[mask]
     true_labels = y_test[mask]
@@ -1251,7 +1244,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
         normalize=True,
         ylabel="Ground Truth",
         xlabel="Predicted",
-        title= f"Confusion matrix: model {model_type}, trait {trait_name}, prediction {pred_type}")
+        title= f"Confusion Matrix\nmodel: {model_type} trait: {trait_name} prediction: {pred_type}")
 
     plt.subplot(1, 2, 2)
     plot_confusion_matrix(
@@ -1260,7 +1253,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
         normalize=True,
         xlabel="Ground Truth",
         ylabel="Predicted",
-        title=f"Transposed Confusion matrix: model {model_type}, trait {trait_name}, prediction {pred_type}")
+        title=f"Transposed Confusion Matrix\nmodel: {model_type} trait: {trait_name} prediction: {pred_type}")
 
     plt.tight_layout()
     plt.show()
@@ -1269,8 +1262,8 @@ def plot_regression_results(
     y_true,
     y_pred,
     title,
-    ylabel="True values",
-    xlabel="Predicted values"):
+    ylabel="Predicted Values",
+    xlabel="True Values"):
     """
     Plots regression results including a scatter plot and error histogram.
     """
@@ -1278,24 +1271,18 @@ def plot_regression_results(
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
 
     # Scatter plot
-    ax1.scatter(y_pred, y_true, alpha=0.5)
+    ax1.scatter(y_true, y_pred, alpha=0.5)
     ax1.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'r--', lw=2)
     ax1.set_xlabel(xlabel, fontsize=15)
     ax1.set_ylabel(ylabel, fontsize=15)
-    ax1.set_title(f"Scatter plot: {title}", fontsize=20)
-
-    # Add R2 and MSE to plot
-    r2 = metrics.r2_score(y_true, y_pred)
-    mse = metrics.mean_squared_error(y_true, y_pred)
-    ax1.text(0.05, 0.95, f'R2: {r2:.2f}\nMSE: {mse:.2f}', transform=ax1.transAxes,
-             verticalalignment='top', fontsize=15)
+    ax1.set_title(f"Predictions\n{title}", fontsize=20)
 
     # Error histogram
     errors = y_pred - y_true
     ax2.hist(errors, bins=30, edgecolor='black')
     ax2.set_xlabel("Prediction Error", fontsize=15)
     ax2.set_ylabel("Frequency", fontsize=15)
-    ax2.set_title(f"Error Distribution: {title}", fontsize=20)
+    ax2.set_title(f"Error Distribution\n{title}", fontsize=20)
 
     plt.tight_layout()
     plt.show()
@@ -1325,26 +1312,82 @@ def show_regression_results(predicted_values_test,
         print(f"Generating plot with all {len(y_test_sampled)} points.")
 
     plot_regression_results(
-        y_test_sampled,
-        predicted_values_test_sampled,
-        ylabel="True Values",
-        xlabel="Predicted Values",
-        title=f"Regression Results: model {model_type}, trait {trait_name}, prediction {pred_type}")
+        y_true=y_test_sampled,
+        y_pred=predicted_values_test_sampled,
+        ylabel="Predicted Values",
+        xlabel="True Values",
+        title=f"model: {model_type}, trait: {trait_name}, prediction: {pred_type}")
 
 #####
 # *** Class balance
 
-def show_ClassBalance(y_train, class_names):
+def show_ClassBalance(y_train, class_names, model_type, trait_name, pred_type):
+    "Plot class balance for training data"
+
+    # get unique labels from the train set
+    class_labels_drop = y_train[~np.isnan(y_train)]
+    class_labels_float = np.unique(class_labels_drop)
+    class_labels = [int(x) for x in class_labels_float]
+
+    # replace class_names if unexpected count
+    if len(class_names) != len(class_labels):
+        #handle unexpected num of class names
+        print("Alert: unexpected length of class labels. setting class names to be found values")
+        print(f"expected: n: {len(class_names)} class names: {class_names} ")
+        print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
+        class_names = class_labels
 
     fig = plt.figure(figsize=(20, 5))
     label_ids, label_counts = np.unique(y_train, return_counts=True)
     label_ids = [int(x) for x in label_ids]
     plt.bar(range(len(label_ids)), label_counts)
-    plt.xticks(range(len(label_ids)),
-               [class_names[i] if i in class_names else str(i) for i in label_ids],
-               rotation=45,
-               fontsize=20)
-    plt.yticks(fontsize=20);
+    plt.xticks(range(len(class_names)),
+               class_names,
+               rotation=0,
+               fontsize=15)
+    plt.yticks(fontsize=15)
+    plt.title(f"Training Data Class Balance\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+    plt.show()
+
+def show_ValueBalance(y_train, class_names, model_type, trait_name, pred_type):
+    ""
+    # get unique labels from the test set
+    class_labels_drop = y_train[~np.isnan(y_train)]
+    class_labels_float = np.unique(class_labels_drop)
+    class_labels = [int(x) for x in class_labels_float]
+
+    # replace class_names if unexpected count
+    if len(class_names) != len(class_labels):
+        #handle unexpected num of class names
+        print("Alert: unexpected length of class labels. setting class names to be found values")
+        print(f"expected: n: {len(class_names)} class names: {class_names} ")
+        print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
+        class_names = class_labels
+
+    # binned by class unique
+    # plt.hist(y_train, bins=len(class_labels), edgecolor='black')
+    # plt.xticks(range(len(class_names)),
+    #            class_names,
+    #            rotation=0,
+    #            fontsize=15)
+    # plt.yticks(fontsize=15)
+    # plt.set_xlabel("Values", fontsize=15)
+    # plt.set_ylabel("Frequency", fontsize=15)
+    # plt.title(f"Training Data Values Balance\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+
+    # histogram
+    fig, ax = plt.subplots(figsize=(20, 5))
+    ax.hist(y_train, bins=30, edgecolor='black')
+    # ax.set_xticks(fontsize=15)
+    # ax.set_yticks(fontsize=15)
+    ax.set_xlabel("Trait Values", fontsize=15)
+    ax.set_ylabel("Frequency", fontsize=15)
+    ax.set_title(f"Training Data Value Distribution\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 #####
 # *** ROC and AUC
@@ -1355,6 +1398,14 @@ def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, mod
     labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
     scores_test = model_GBM.predict_proba(x_test_GBM)
     colors = plt.cm.Set1.colors
+
+    # replace class_names if unexpected count
+    if len(class_names) != len(class_labels):
+        #handle unexpected num of class names
+        print("Alert: unexpected length of class labels. setting class names to be found values")
+        print(f"expected: n: {len(class_names)} class names: {class_names} ")
+        print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
+        class_names = class_labels
 
     fpr, tpr, roc_auc = {}, {}, {}
     for idx, _ in enumerate(class_labels):
@@ -1370,17 +1421,17 @@ def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, mod
             tpr[idx],
             color=colors[idx],
             lw=2,
-            label=class_names[idx] + " ({:0.5f})".format(roc_auc[idx]),
+            label= f"{class_names[idx]}" + " ({:0.5f})".format(roc_auc[idx]),
         )
 
     plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
     plt.xlim([0.0, 0.99])
     plt.ylim([0.0, 1.05])
-    plt.xlabel("False Positive Rate", fontsize=20)
-    plt.ylabel("True Positive Rate", fontsize=20)
-    plt.xticks(fontsize=20)
-    plt.yticks(fontsize=20)
-    plt.title(f"ROC Curve: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
+    plt.xlabel("False Positive Rate", fontsize=15)
+    plt.ylabel("True Positive Rate", fontsize=15)
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    plt.title(f"ROC Curve\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
     plt.legend(loc="center right", prop={"size": 15})
     plt.show()
 
@@ -1388,7 +1439,8 @@ def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, mod
 # *** Feature importance
 
 def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, trait_name, pred_type):
-    "plots a heatmap of time and feature showing contribution of each to predictions"
+    "plots a heatmap of time and feature showing contribution of each to predictions "
+
     # Get feature importances and reshape them to dates and features
     feature_importances = model_GBM.feature_importances_.reshape((t_dim, f_dim))
 
@@ -1396,18 +1448,19 @@ def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, t
     ax = plt.gca()
 
     # Plot the importances
-    im = ax.imshow(feature_importances, aspect=0.5)
-    plt.xticks(range(len(feature_names)), feature_names, rotation=90, fontsize=20)
-    plt.yticks(range(t_dim), [f"T{i}" for i in range(t_dim)], fontsize=20)
-    plt.xlabel("Bands and band related features", fontsize=20)
-    plt.ylabel("Time frames", fontsize=20)
-    plt.title(f"Feature Importance: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
+    im = ax.imshow(feature_importances, aspect=1.0)
+    plt.xticks(range(len(feature_names)), feature_names, rotation=90, fontsize=15)
+    plt.yticks(range(t_dim), [f"t {i}" for i in range(t_dim)], fontsize=15)
+    plt.xlabel(f"\nSpectral Bands and Sigma of Gaussian Space", fontsize=15)
+    plt.ylabel("Time", fontsize=15)
+    plt.title(f"Feature Importance\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
     ax.xaxis.tick_top()
     ax.xaxis.set_label_position("top")
 
     fig.subplots_adjust(wspace=0, hspace=0)
     cb = fig.colorbar(im, ax=[ax], orientation="horizontal", pad=0.01, aspect=100)
     cb.ax.tick_params(labelsize=20)
+    plt.show()
 
 def testset_predict_validate(trait_name, area_name, objective, model_type, class_names):
     """
@@ -1457,6 +1510,20 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
         raise ValueError('Model type not recognized')
 
     if (GBM_flag or TSAI_flag ) and (multiclass_flag):
+        show_ClassBalance(y_train=y_train,
+                          class_names=class_names,
+                          model_type=model_type,
+                          trait_name=trait_name,
+                          pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (regression_flag):
+        show_ValueBalance(y_train=y_train,
+                          class_names=class_names,
+                          model_type=model_type,
+                          trait_name=trait_name,
+                          pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
         report_Metrics_Classification(
             y_test=y_test,
             predicted_labels_test=predicted_test,
@@ -1485,17 +1552,10 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
     if (GBM_flag or TSAI_flag ) and (regression_flag):
         show_regression_results(
             predicted_values_test=predicted_test,
-            # print(type(predicted_test)) #  <class 'numpy.ndarray'>
-            # print(predicted_test.shape) # (3370, 1)
             y_test=y_test,
-            # print(type(y_test)) # <class 'numpy.ndarray'>
-            # print(y_test.shape) # (3370,)
             trait_name=trait_name,
             model_type=model_type,
             pred_type=objective)
-
-    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
-        show_ClassBalance(y_train=y_train, class_names=class_names)
 
     if (GBM_flag) and (multiclass_flag):
         show_ROCAUC(
@@ -1716,6 +1776,7 @@ plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM',
 
 def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     "plot ground truth, prediction, categorical and continuous agreement"
+
     #pick rndm patch
     idx = np.random.choice(range(len(areas)))
     eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, f"eopatch_{idx}"), lazy_loading=True)
@@ -1736,7 +1797,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
 
     # Draw the Reference map
     fig = plt.figure(figsize=(20, 20))
-    fig.suptitle(f"Model: {model_type}, Trait: {trait_name}, Prediction: {pred_type}", fontsize=24)
+    fig.suptitle(f"Spatial Prediction\nmodel: {model_type} trait: {trait_name} prediction: {pred_type}", fontsize=20)
 
     # trait
     ax = plt.subplot(2, 2, 1)
@@ -1747,7 +1808,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
-    plt.title(f"Ground Truth: {trait_name}", fontsize=20)
+    plt.title(f"Ground Truth: {trait_name}", fontsize=15)
 
     #prediction
     ax = plt.subplot(2, 2, 2)
@@ -1758,11 +1819,26 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
-    plt.title("Prediction", fontsize=20)
+    plt.title("Prediction", fontsize=15)
 
     #disagreement logical
     ax = plt.subplot(2, 2, 3)
-    data = eopatch.data_timeless[identifier].squeeze() != eopatch.data_timeless[trait_name].squeeze()
+    pred =  eopatch.data_timeless[identifier].squeeze()
+    true = eopatch.data_timeless[trait_name].squeeze()
+    if pred_type == 'multiclass':
+        dis_type = "logical"
+        dis_amnt = "difference"
+        data = pred != true
+    elif pred_type == 'regression':
+        threshold = 50
+        dis_type = "percentile"
+        dis_amnt = threshold
+        difference = np.abs(pred - true)
+        percentile = np.percentile(difference, threshold)
+        data = difference > percentile
+    else:
+        raise ValueError(f"pred_type not recognized ({pred_type})")
+
     masked = np.ma.masked_where(mask, data)
     cmap = plt.cm.colors.ListedColormap(['green', 'red'])
     plt.imshow(masked[w_min:w_max, h_min:h_max], cmap=cmap)
@@ -1771,7 +1847,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
-    plt.title("Disagreement", fontsize=20)
+    plt.title(f"Disagreement ({dis_type} {dis_amnt})", fontsize=15)
 
     # disagreement quantity
     ax = plt.subplot(2, 2, 4)
@@ -1784,10 +1860,11 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     plt.xticks([])
     plt.yticks([])
     ax.set_aspect("auto")
-    plt.title("Difference", fontsize=20)
+    plt.title("Difference", fontsize=15)
 
     fig.subplots_adjust(wspace=0.1, hspace=0.1)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
 
 # USER
 plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', pred_type="multiclass")
@@ -2035,8 +2112,6 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 
 # Prepare eopatches for the TSAI validation area
 # TSAI overwrites GBM, may be needed, currently proceeding without this
-# eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-# eopatch
 # ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
 # ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 # eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
@@ -2085,6 +2160,7 @@ plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspe
 #####
 # *** Quantify agreement
 # USER
+
 validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', class_names=['black','white', 'secret third thing'])
 
 ######### ** Export to geotiff all for model comparison
@@ -2093,7 +2169,7 @@ validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='reg
 # *** export
 
 class MaskTask(EOTask):
-    "Uses in_polygon layer to mask a target prediction. Arg: the layer to mask"
+    "Uses in_polygon layer to mask a target prediction. Arg: ident, the layer to mask"
     def __init__(self, ident):
         self.ident = ident
 
@@ -2209,5 +2285,4 @@ ask_ExportPatches()
 
 ############################################ Fin
 
-# TODO clean up visualizations
 # TODO do complete run of both models in regression and categorization

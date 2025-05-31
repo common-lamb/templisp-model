@@ -212,7 +212,7 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
 
     # check n of tifs as expected
     if not len(tifs) ==  expected_n_tifs:
-        raise Error(f"The number of tifs is not the expected {expected_n_tifs}. Found: {len(tifs)}")
+        raise RuntimeError(f"The number of tifs is not the expected {expected_n_tifs}. Found: {len(tifs)}")
 
     # check indices are as expected
     indices = set()
@@ -1112,7 +1112,7 @@ def predict_testSet(x_testSet, area_name, trait_name, objective, model_type, sho
 #####
 # *** F1 etc table
 
-def report_Metrics_Classification(y_test, predicted_labels_test, class_names, model_type, trait_name, pred_type):
+def report_Metrics_Classification(y_test, predicted_labels_test, class_names, model_type, testset_name, trait_name, pred_type):
 
     class_labels_drop = y_test[~np.isnan(y_test)]
     class_labels_float = np.unique(class_labels_drop)
@@ -1140,7 +1140,7 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
     precision = metrics.precision_score(true_labels, predictions, labels=class_labels, average=None)
 
     print("")
-    print (f"Classification Metrics\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}")
+    print (f"Classification Metrics\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}")
     print("---------------------------------")
     print("Classification accuracy {:.1f}%".format(100 * accuracy))
     print("Classification F1-score {:.1f}%".format(100 * avg_f1_score))
@@ -1155,7 +1155,7 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
     print("         --------------------------------------------------")
     print("")
 
-def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_name, pred_type):
+def report_Metrics_Regression(y_test, predicted_values_test, model_type, testset_name, trait_name, pred_type):
 
     # drop values from both where nan
     mask = ~np.isnan(y_test)
@@ -1169,7 +1169,7 @@ def report_Metrics_Regression(y_test, predicted_values_test, model_type, trait_n
     r2 = metrics.r2_score(y_test, predicted_values_test)
 
     print("")
-    print(f"Regression Metrics\nmodel: {model_type}, target: {trait_name}, prediction: {pred_type}")
+    print(f"Regression Metrics\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}")
     print("---------------------------------")
     print(f"Mean Squared Error (MSE): {mse:.4f}")
     print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
@@ -1213,6 +1213,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
                                y_test,
                                trait_name,
                                model_type,
+                               testset_name,
                                pred_type,
                                class_names):
     "plots standard and transposed confusion matrix"
@@ -1244,7 +1245,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
         normalize=True,
         ylabel="Ground Truth",
         xlabel="Predicted",
-        title= f"Confusion Matrix\nmodel: {model_type} trait: {trait_name} prediction: {pred_type}")
+        title= f"Confusion Matrix\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}")
 
     plt.subplot(1, 2, 2)
     plot_confusion_matrix(
@@ -1253,7 +1254,7 @@ def show_std_T_confusionMatrix(predicted_labels_test,
         normalize=True,
         xlabel="Ground Truth",
         ylabel="Predicted",
-        title=f"Transposed Confusion Matrix\nmodel: {model_type} trait: {trait_name} prediction: {pred_type}")
+        title=f"Transposed Confusion Matrix\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}")
 
     plt.tight_layout()
     plt.show()
@@ -1291,6 +1292,7 @@ def show_regression_results(predicted_values_test,
                             y_test,
                             trait_name,
                             model_type,
+                            testset_name,
                             pred_type):
     """Plots regression results"""
 
@@ -1316,12 +1318,12 @@ def show_regression_results(predicted_values_test,
         y_pred=predicted_values_test_sampled,
         ylabel="Predicted Values",
         xlabel="True Values",
-        title=f"model: {model_type}, trait: {trait_name}, prediction: {pred_type}")
+        title=f"model: {model_type} test_set: {testset_name} trait: {trait_name} prediction: {pred_type}")
 
 #####
 # *** Class balance
 
-def show_ClassBalance(y_train, class_names, model_type, trait_name, pred_type):
+def show_ClassBalance(y_train, class_names, model_type, testset_name, trait_name, pred_type):
     "Plot class balance for training data"
 
     # get unique labels from the train set
@@ -1346,10 +1348,10 @@ def show_ClassBalance(y_train, class_names, model_type, trait_name, pred_type):
                rotation=0,
                fontsize=15)
     plt.yticks(fontsize=15)
-    plt.title(f"Training Data Class Balance\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+    plt.title(f"Training Data Class Balance\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}", fontsize=20)
     plt.show()
 
-def show_ValueBalance(y_train, class_names, model_type, trait_name, pred_type):
+def show_ValueBalance(y_train, class_names, model_type, testset_name, trait_name, pred_type):
     ""
     # get unique labels from the test set
     class_labels_drop = y_train[~np.isnan(y_train)]
@@ -1364,17 +1366,6 @@ def show_ValueBalance(y_train, class_names, model_type, trait_name, pred_type):
         print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
         class_names = class_labels
 
-    # binned by class unique
-    # plt.hist(y_train, bins=len(class_labels), edgecolor='black')
-    # plt.xticks(range(len(class_names)),
-    #            class_names,
-    #            rotation=0,
-    #            fontsize=15)
-    # plt.yticks(fontsize=15)
-    # plt.set_xlabel("Values", fontsize=15)
-    # plt.set_ylabel("Frequency", fontsize=15)
-    # plt.title(f"Training Data Values Balance\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
-
     # histogram
     fig, ax = plt.subplots(figsize=(20, 5))
     ax.hist(y_train, bins=30, edgecolor='black')
@@ -1382,7 +1373,7 @@ def show_ValueBalance(y_train, class_names, model_type, trait_name, pred_type):
     # ax.set_yticks(fontsize=15)
     ax.set_xlabel("Trait Values", fontsize=15)
     ax.set_ylabel("Frequency", fontsize=15)
-    ax.set_title(f"Training Data Value Distribution\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+    ax.set_title(f"Training Data Value Distribution\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}", fontsize=20)
 
     plt.tight_layout()
     plt.show()
@@ -1392,7 +1383,7 @@ def show_ValueBalance(y_train, class_names, model_type, trait_name, pred_type):
 #####
 # *** ROC and AUC
 
-def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, model_type, trait_name, pred_type):
+def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, model_type, testset_name, trait_name, pred_type):
 
     class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
     labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
@@ -1431,14 +1422,14 @@ def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, mod
     plt.ylabel("True Positive Rate", fontsize=15)
     plt.xticks(fontsize=15)
     plt.yticks(fontsize=15)
-    plt.title(f"ROC Curve\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+    plt.title(f"ROC Curve\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}", fontsize=20)
     plt.legend(loc="center right", prop={"size": 15})
     plt.show()
 
 #####
 # *** Feature importance
 
-def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, trait_name, pred_type):
+def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, testset_name, trait_name, pred_type):
     "plots a heatmap of time and feature showing contribution of each to predictions "
 
     # Get feature importances and reshape them to dates and features
@@ -1453,7 +1444,7 @@ def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, t
     plt.yticks(range(t_dim), [f"t {i}" for i in range(t_dim)], fontsize=15)
     plt.xlabel(f"\nSpectral Bands and Sigma of Gaussian Space", fontsize=15)
     plt.ylabel("Time", fontsize=15)
-    plt.title(f"Feature Importance\nmodel: {model_type}, trait: {trait_name}, prediction: {pred_type}", fontsize=20)
+    plt.title(f"Feature Importance\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}", fontsize=20)
     ax.xaxis.tick_top()
     ax.xaxis.set_label_position("top")
 
@@ -1462,7 +1453,7 @@ def show_featureImportance(model_GBM, feature_names, t_dim, f_dim, model_type, t
     cb.ax.tick_params(labelsize=20)
     plt.show()
 
-def testset_predict_validate(trait_name, area_name, objective, model_type, class_names):
+def testset_predict_validate(trait_name, area_name, objective, model_type, testset_name, class_names):
     """
     collects sampled data, predicts and then reports metrics
 
@@ -1513,6 +1504,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
         show_ClassBalance(y_train=y_train,
                           class_names=class_names,
                           model_type=model_type,
+                          testset_name=testset_name,
                           trait_name=trait_name,
                           pred_type=objective)
 
@@ -1520,6 +1512,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
         show_ValueBalance(y_train=y_train,
                           class_names=class_names,
                           model_type=model_type,
+                          testset_name=testset_name,
                           trait_name=trait_name,
                           pred_type=objective)
 
@@ -1529,6 +1522,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             predicted_labels_test=predicted_test,
             class_names=class_names,
             model_type=model_type,
+            testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
 
@@ -1537,6 +1531,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             y_test=y_test,
             predicted_values_test=predicted_test,
             model_type=model_type,
+            testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
 
@@ -1547,6 +1542,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             trait_name=trait_name,
             class_names=class_names,
             model_type=model_type,
+            testset_name=testset_name,
             pred_type=objective)
 
     if (GBM_flag or TSAI_flag ) and (regression_flag):
@@ -1555,6 +1551,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             y_test=y_test,
             trait_name=trait_name,
             model_type=model_type,
+            testset_name=testset_name,
             pred_type=objective)
 
     if (GBM_flag) and (multiclass_flag):
@@ -1565,6 +1562,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             y_train_GBM=y_train,
             x_test_GBM=x_test,
             model_type=model_type,
+            testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
 
@@ -1575,11 +1573,12 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, class
             t_dim=t_dim,
             f_dim=f_dim,
             model_type=model_type,
+            testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
 
 # USER
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white'])
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
@@ -1747,7 +1746,7 @@ def cartesian_from_position(position, grid_h, grid_w):
     col = position // grid_h # int div of height gives col
     return row, col
 
-def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, pred_type):
+def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, testset_name, pred_type):
     ""
     fig, axs = plt.subplots(nrows=grid_h+1, ncols=grid_w+1, figsize=(20, 25))
     for i in tqdm(range(len(areas))):
@@ -1765,16 +1764,16 @@ def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, pred_type):
 
     cb = fig.colorbar(im, ax=axs.ravel().tolist(), orientation="horizontal", pad=0.01, aspect=100)
     cb.ax.tick_params(labelsize=20)
-    plt.title(f"Prediction: model {model_type}, trait {trait_name}, prediction {pred_type}", fontsize=20)
+    plt.title(f"Prediction: model: {model_type} test-set: {testset_name} trait {trait_name} prediction {pred_type}", fontsize=20)
     plt.show()
 
 # USER
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', pred_type='multiclass', areas=area_grid(DATA_validate))
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', testset_name='transfer', pred_type='multiclass', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
 
-def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
+def plot_disagreement(areas, trait_name, inspect_ratio, model_type, testset_name, pred_type):
     "plot ground truth, prediction, categorical and continuous agreement"
 
     #pick rndm patch
@@ -1797,7 +1796,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
 
     # Draw the Reference map
     fig = plt.figure(figsize=(20, 20))
-    fig.suptitle(f"Spatial Prediction\nmodel: {model_type} trait: {trait_name} prediction: {pred_type}", fontsize=20)
+    fig.suptitle(f"Spatial Prediction\nmodel: {model_type} test-set: {testset_name} trait: {trait_name} prediction: {pred_type}", fontsize=20)
 
     # trait
     ax = plt.subplot(2, 2, 1)
@@ -1867,7 +1866,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, pred_type):
     plt.show()
 
 # USER
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', pred_type="multiclass")
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
 
 #####
 # *** Quantify agreement
@@ -1935,7 +1934,7 @@ def create_validation_data(trait_name, objective, model_type, show=False):
         print(f"y_pred: {y_pred.shape}")
     return data
 
-def validationset_metrics(trait_name, area_name, objective, model_type, class_names):
+def validationset_metrics(trait_name, area_name, objective, model_type, testset_name, class_names):
     """
     collects predicted data,  reports metrics
 
@@ -1966,6 +1965,7 @@ class_names: list of str names for classes which were predicted
             predicted_labels_test=predicted_test,
             class_names=class_names,
             model_type=model_type,
+            testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
 
@@ -1974,6 +1974,7 @@ class_names: list of str names for classes which were predicted
             y_test=y_test,
             predicted_values_test=predicted_test,
             model_type=model_type,
+            testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
 
@@ -1984,6 +1985,7 @@ class_names: list of str names for classes which were predicted
             trait_name=trait_name,
             class_names=class_names,
             model_type=model_type,
+            testset_name=testset_name,
             pred_type=objective)
 
     if (GBM_flag or TSAI_flag ) and (regression_flag):
@@ -1992,10 +1994,11 @@ class_names: list of str names for classes which were predicted
             y_test=y_test,
             trait_name=trait_name,
             model_type=model_type,
+            testset_name=testset_name,
             pred_type=objective)
 
 # USER
-validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
 
 ################
 # * TST experiment
@@ -2102,7 +2105,7 @@ ask_trainTSAI()
 # quantify prediction
 
 # USER
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', class_names=['black','white'])
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
@@ -2149,19 +2152,19 @@ verify_predictions_TSAI()
 # *** Visualize predicted trait
 
 # USER
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', pred_type='regression', areas=area_grid(DATA_validate))
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
 
 # USER
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', pred_type="regression")
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
 
 #####
 # *** Quantify agreement
 # USER
 
-validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white', 'secret third thing'])
 
 ######### ** Export to geotiff all for model comparison
 

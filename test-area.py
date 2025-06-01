@@ -85,6 +85,7 @@ import datetime
 import pandas as pd
 import numpy as np
 import rasterio
+from rasterio.merge import merge as riomerge
 import geopandas as gpd
 from osgeo import gdal
 import matplotlib.pyplot as plt
@@ -119,12 +120,12 @@ from eolearn.geometry import ErosionTask, VectorToRasterTask
 
 ######### ** Path and file selection
 # input data
-DATA_ROOT= pathlib.Path("/bulk-2/2023-package")
+DATA_ROOT= pathlib.Path("/bulk-2/2023-package") # contains all input data dirs
 # set expected dirs
-DATA_AREAS = os.path.join(DATA_ROOT, "area_poly")
-DATA_IDS = os.path.join(DATA_ROOT, "id_poly")
-DATA_RASTERS = os.path.join(DATA_ROOT, "test-rasters") #dir rasters or test-rasters
-DATA_TABLE= os.path.join(DATA_ROOT, "tabular")
+DATA_AREAS = os.path.join(DATA_ROOT, "area_poly") # contains gpkg polygons that define study area
+DATA_IDS = os.path.join(DATA_ROOT, "id_poly") # contains a gpkg with polygons whose attribute table defines their identity by integer
+DATA_RASTERS = os.path.join(DATA_ROOT, "test-rasters") # contains the tif files named like: date_2023-07-31_index_blue_sigma-0.tif
+DATA_TABLE= os.path.join(DATA_ROOT, "tabular") # contains a csv where columns are trait data, with a column matches the id_poly attribute table
 # set expected files
 DATA_train = os.path.join(DATA_AREAS, "test-AOI-north.gpkg")
 DATA_validate = os.path.join(DATA_AREAS, "test-AOI-south.gpkg")
@@ -151,7 +152,7 @@ EXPECTED_N_TIFS = 630
 EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
 USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
-SAMPLE_RATE = 0.10 # percentage of eopatches sampled for training. in (0.0-1.0)
+SAMPLE_RATE = 0.50 # percentage of eopatches sampled for training. in (0.0-1.0)
 TEST_PERCENTAGE = 0.20 # perventage of test-train set to use for testing. in (0.0-1.0)
 
 NO_DATA_VALUE = -9999 #used for export, ensure no collision with expected data
@@ -1048,6 +1049,12 @@ def ask_trainGBM():
                  model_type='GBM',
                  x_train_GBM=x_train_GBM,
                  y_train_GBM=y_train_GBM,)
+        trainGBM(objective='regression',
+                 area_name='test-area',
+                 trait_name='HEIGHT',
+                 model_type='GBM',
+                 x_train_GBM=x_train_GBM,
+                 y_train_GBM=y_train_GBM,)
 
 # USER
 ask_trainGBM()
@@ -1579,6 +1586,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
 
 # USER
 testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
@@ -1677,11 +1685,17 @@ def CreatePredictionWorkflow(areas, eopatch_dir, area_name, trait_name, objectiv
     concatenate_task = MergeFeatureTask({FeatureType.DATA: data_keys}, (FeatureType.DATA, "FEATURES_TRAINING"))
 
     # predict
-    predict_task = PredictPatchTask(model=model,
-                                    model_type=model_type,
-                                    feature=(FeatureType.DATA, "FEATURES_TRAINING"),
-                                    predicted_trait_name=f"PREDICTED_{trait_name}_{objective}_{model_type}",
-                                    predicted_probas_name=f"PREDICTED_{trait_name}_{objective}_{model_type}_PROBA")
+    if model_type == 'GBM' and objective == 'regression': #GBM regression has no probas
+        predict_task = PredictPatchTask(model=model,
+                                        model_type=model_type,
+                                        feature=(FeatureType.DATA, "FEATURES_TRAINING"),
+                                        predicted_trait_name=f"PREDICTED_{trait_name}_{objective}_{model_type}")
+    else:
+        predict_task = PredictPatchTask(model=model,
+                                        model_type=model_type,
+                                        feature=(FeatureType.DATA, "FEATURES_TRAINING"),
+                                        predicted_trait_name=f"PREDICTED_{trait_name}_{objective}_{model_type}",
+                                        predicted_probas_name=f"PREDICTED_{trait_name}_{objective}_{model_type}_PROBA")
 
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
@@ -1713,6 +1727,12 @@ def ask_PredictPatches_GBM():
                                                            trait_name='HEIGHT',
                                                            objective='multiclass',
                                                            model_type = 'GBM'))
+        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                           area_name='test-area',
+                                                           trait_name='HEIGHT',
+                                                           objective='regression',
+                                                           model_type = 'GBM'))
 
 # USER
 ask_PredictPatches_GBM()
@@ -1725,6 +1745,7 @@ def verify_predictions_GBM():
     eopatch
     eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM'))
     eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM_PROBA'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_GBM'))
 
 # USER
 verify_predictions_GBM()
@@ -1769,6 +1790,7 @@ def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, testset_name,
 
 # USER
 plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', testset_name='transfer', pred_type='multiclass', areas=area_grid(DATA_validate))
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
@@ -1867,6 +1889,7 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, testset_name
 
 # USER
 plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
 
 #####
 # *** Quantify agreement
@@ -1949,7 +1972,10 @@ class_names: list of str names for classes which were predicted
     x_train, y_train, x_test, y_test, predicted_test  = create_validation_data(trait_name=trait_name, objective=objective, model_type=model_type)
 
     # deal with masked values in validation data: y_test, predicted_labels_test
-    predicted_test = predicted_test.filled(np.nan)
+
+    predicted_test = predicted_test.astype(float) # convert to guarantee int array is float
+    predicted_test = predicted_test.filled(np.nan) # fill masked positions
+    y_test = y_test.astype(float)
     y_test = y_test.filled(np.nan)
 
     # quantify prediction
@@ -1999,6 +2025,7 @@ class_names: list of str names for classes which were predicted
 
 # USER
 validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
 
 ################
 # * TST experiment
@@ -2024,7 +2051,7 @@ def trainTSAI(objective,
 
     # shared setup
     batch_size = 8192 # print(math.pow(2,13))
-    n_epochs = 300
+    n_epochs = 400
     batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
     inplace = False #true, transformation of training data, faster if it fits in mem
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -2090,6 +2117,13 @@ def ask_trainTSAI():
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
         x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
+        trainTSAI(objective='multiclass',
+                 area_name='test-area',
+                 trait_name='HEIGHT',
+                 model_type='TSAI',
+                 x_train_TSAI=x_train_TSAI,
+                 y_train_TSAI=y_train_TSAI,
+                 splits = splits)
         trainTSAI(objective='regression',
                  area_name='test-area',
                  trait_name='HEIGHT',
@@ -2106,6 +2140,7 @@ ask_trainTSAI()
 
 # USER
 testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
@@ -2130,6 +2165,12 @@ def ask_PredictPatches_TSAI():
                                                            trait_name='HEIGHT',
                                                            objective='regression',
                                                            model_type = 'TSAI'))
+        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                           area_name='test-area',
+                                                           trait_name='HEIGHT',
+                                                           objective='multiclass',
+                                                           model_type = 'TSAI'))
 
 # USER
 ask_PredictPatches_TSAI()
@@ -2153,18 +2194,21 @@ verify_predictions_TSAI()
 
 # USER
 plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', testset_name='transfer', pred_type='multiclass', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
 
 # USER
 plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
 
 #####
 # *** Quantify agreement
 # USER
 
 validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white', 'secret third thing'])
 
 ######### ** Export to geotiff all for model comparison
 
@@ -2241,7 +2285,7 @@ def merge_exports(trait_name, objective, model_type):
     output_file = f"{RESULTS_DIR}/{identifier}.tiff"
 
     src_files = [rasterio.open(f) for f in input_files]
-    mosaic, out_trans = rasterio.merge.merge(src_files)
+    mosaic, out_trans = riomerge(src_files)
     out_meta = src_files[0].meta.copy()
     out_meta.update({
         "driver": "GTiff",
@@ -2263,29 +2307,28 @@ def merge_exports(trait_name, objective, model_type):
 
 def ask_ExportPatches():
 
-    trait_name = 'HEIGHT' # must be provided
-    objective = 'regression'
-    model_type = 'TSAI'
-
-    # both can be None to export only trait map
-    # objective = None
-    # model_type = None
+                # set both objective and model_type are None to export only trait map
+    exports = [{'trait_name': 'HEIGHT', 'objective': None, 'model_type': None},
+               {'trait_name': 'HEIGHT', 'objective': 'regression', 'model_type': 'TSAI'},
+               {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'TSAI'},
+               {'trait_name': 'HEIGHT', 'objective': 'regression', 'model_type': 'GBM'},
+               {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'GBM'}]
 
     print("export predictions?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        execute_prepared_workflow(CreateExportWorkflow(areas=area_grid(DATA_validate),
-                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
-                                                           trait_name=trait_name,
-                                                           objective=objective,
-                                                           model_type =model_type))
-        merge_exports(trait_name=trait_name,
-                      objective=objective,
-                      model_type =model_type)
+        for e in exports:
+            print(f"exporting: {e}")
+            execute_prepared_workflow(CreateExportWorkflow(areas=area_grid(DATA_validate),
+                                                               eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                               trait_name=e['trait_name'],
+                                                               objective=e['objective'],
+                                                               model_type =e['model_type']))
+            merge_exports(trait_name=e['trait_name'],
+                          objective=e['objective'],
+                          model_type =e['model_type'])
 
 # USER
 ask_ExportPatches()
 
 ############################################ Fin
-
-# TODO do complete run of both models in regression and categorization

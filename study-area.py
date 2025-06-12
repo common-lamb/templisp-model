@@ -124,12 +124,12 @@ DATA_ROOT= pathlib.Path("/bulk-2/2023-package") # contains all input data dirs
 # set expected dirs
 DATA_AREAS = os.path.join(DATA_ROOT, "area_poly") # contains gpkg polygons that define study area
 DATA_IDS = os.path.join(DATA_ROOT, "id_poly") # contains a gpkg with polygons whose attribute table defines their identity by integer
-DATA_RASTERS = os.path.join(DATA_ROOT, "test-rasters") # contains the tif files named like: date_2023-07-31_index_blue_sigma-0.tif
+DATA_RASTERS = os.path.join(DATA_ROOT, "rasters") # contains the tif files named like: date_2023-07-31_index_blue_sigma-0.tif
 DATA_TABLE= os.path.join(DATA_ROOT, "tabular") # contains a csv where columns are trait data, with a column matches the id_poly attribute table
 # set expected files
-DATA_train = os.path.join(DATA_AREAS, "test-AOI-north.gpkg")
-DATA_validate = os.path.join(DATA_AREAS, "test-AOI-south.gpkg")
-DATA_all =  os.path.join(DATA_AREAS, "test-AOI.gpkg")
+DATA_train = os.path.join(DATA_AREAS, "AOI-north.gpkg")
+DATA_validate = os.path.join(DATA_AREAS, "AOI-south.gpkg")
+DATA_all =  os.path.join(DATA_AREAS, "AOI.gpkg")
 DATA_ids = os.path.join(DATA_IDS, "identities.gpkg")
 DATA_table = os.path.join(DATA_TABLE, "field-data.csv")
 
@@ -152,7 +152,7 @@ EXPECTED_N_TIFS = 630
 EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
 USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
-SAMPLE_RATE = 0.50 # percentage of eopatches sampled for training. in (0.0-1.0)
+SAMPLE_RATE = 0.01 # &&& percentage of eopatches sampled for training. in (0.0-1.0)
 TEST_PERCENTAGE = 0.20 # perventage of test-train set to use for testing. in (0.0-1.0)
 
 NO_DATA_VALUE = -9999 #used for export, ensure no collision with expected data
@@ -676,6 +676,12 @@ def bind_observations(polygons=DATA_ids, observations=DATA_table, ddir=DATA_DIR)
     merged_gdf.to_file(abs_path, driver='GPKG', layer='name')
     return abs_path
 
+def verify_eopatch_preloaded():
+    eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
+    print(eopatch)
+
+verify_eopatch_preloaded()
+
 def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     """
     Creates a workflow to add dates, masks, rasterized observation data to eopatches.
@@ -696,23 +702,121 @@ def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     #####
     # *** Rasterize observations
     '''
-    merged_gdf.columns for selection by values_column
 
-    Index(['sample', 'geometry', 'NAME', 'HEIGHT-CM', 'ROW-TYPE',
-           'HULLESS-CONDITION', 'SBLOTCH-RATING', 'WEIGHT', 'DIAMETER', 'AREA',
-           'STEM-WEIGHT', 'DENSITY', 'ROWS', 'BARLEY-WHEAT', 'HULLED',
-           'SBLOTCH-LMH'],
-          dtype='object')
+    head field-data.csv
+SAMPLE,NAME,HEIGHT-CM,ROW-TYPE,HULLESS-CONDITION,SBLOTCH-RATING,WEIGHT,DIAMETER,AREA,STEM-WEIGHT,DENSITY,ROWS,BARLEY-WHEAT,HULLED,SBLOTCH-LMH
+1,Durum,88,D,D,0,92.4,38,1134,0.0815,9.26e-4,-1,2,-1,1
+2,Wheat,83,W,W,0,110.4,37,1075,0.1027,0.001237,-1,2,-1,1
+3,ARGYLE,77,6,C,1,92.4,41,1320,0.07,9.09e-4,6,1,1,1
+4,Cerveza,68,2,C,1,97.6,48,1810,0.0539,7.93e-4,2,1,1,1
+5,Norman,63,2,C,8,76.1,40,1257,0.0605,9.61e-4,2,1,1,3
 
-    we know height is valid for test area
+    X SAMPLE 1
+    X NAME Durum
+    HEIGHT-CM 88
+    X ROW-TYPE D
+    X HULLESS-CONDITION D
+    SBLOTCH-RATING 0
+    WEIGHT 92.4
+    DIAMETER 38
+    AREA 1134
+    STEM-WEIGHT 0.0815
+    DENSITY 9.26e-4
+    ROWS -1
+    BARLEY-WHEAT 2
+    HULLED -1
+    SBLOTCH-LMH 1
+
     '''
 
     # USER
-    # add more rasterization tasks as needed
-    rasterize_height_task = VectorToRasterTask(
+    # add more rasterize_tasks as needed
+
+    # HEIGHT-CM
+    rasterize_task_HEIGHT_CM = VectorToRasterTask(
         vector_feature, # as used in vector import task
-        (FeatureType.DATA_TIMELESS, "HEIGHT"), #name of rasterized new layer, DATA floats
+        (FeatureType.DATA_TIMELESS, "HEIGHT-CM"), #name of rasterized new layer, DATA floats
         values_column="HEIGHT-CM", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # SBLOTCH-RATING
+    rasterize_task_SBLOTCH_RATING = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "SBLOTCH-RATING"), #name of rasterized new layer, DATA floats
+        values_column="SBLOTCH-RATING", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # WEIGHT
+    rasterize_task_WEIGHT = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "WEIGHT"), #name of rasterized new layer, DATA floats
+        values_column="WEIGHT", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # DIAMETER
+    rasterize_task_DIAMETER = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "DIAMETER"), #name of rasterized new layer, DATA floats
+        values_column="DIAMETER", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # AREA
+    rasterize_task_AREA = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "AREA"), #name of rasterized new layer, DATA floats
+        values_column="AREA", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # STEM-WEIGHT
+    rasterize_task_STEM_WEIGHT = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "STEM-WEIGHT"), #name of rasterized new layer, DATA floats
+        values_column="STEM-WEIGHT", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # DENSITY
+    rasterize_task_DENSITY = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "DENSITY"), #name of rasterized new layer, DATA floats
+        values_column="DENSITY", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # ROWS
+    rasterize_task_ROWS = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "ROWS"), #name of rasterized new layer, DATA floats
+        values_column="ROWS", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # BARLEY-WHEAT
+    rasterize_task_BARLEY_WHEAT = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "BARLEY-WHEAT"), #name of rasterized new layer, DATA floats
+        values_column="BARLEY-WHEAT", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # HULLED
+    rasterize_task_HULLED = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "HULLED"), #name of rasterized new layer, DATA floats
+        values_column="HULLED", # col of merged_gdf.columns to rasterize
+        raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
+        raster_dtype=np.float32, # float
+    )
+    # SBLOTCH-LMH
+    rasterize_task_SBLOTCH_LMH = VectorToRasterTask(
+        vector_feature, # as used in vector import task
+        (FeatureType.DATA_TIMELESS, "SBLOTCH-LMH"), #name of rasterized new layer, DATA floats
+        values_column="SBLOTCH-LMH", # col of merged_gdf.columns to rasterize
         raster_shape=(FeatureType.MASK_TIMELESS, "IN_POLYGON"),
         raster_dtype=np.float32, # float
     )
@@ -722,11 +826,23 @@ def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     add_timestamps_task = AddTimestamps()
     make_areamask_task = MakeAreaMask(mask_file)
     vector_task = vector_import_task
-    rasterize_task = rasterize_height_task
+    #rasterize_task_X
     save_task = SaveTask(eopatch_dir, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
 
     # node list
-    workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task, make_areamask_task, vector_task, rasterize_task, save_task)
+    workflow_nodes = linearly_connect_tasks(load_task, add_timestamps_task, make_areamask_task, vector_task,
+                                            rasterize_task_HEIGHT_CM,
+                                            rasterize_task_SBLOTCH_RATING,
+                                            rasterize_task_WEIGHT,
+                                            rasterize_task_DIAMETER,
+                                            rasterize_task_AREA,
+                                            rasterize_task_STEM_WEIGHT,
+                                            rasterize_task_DENSITY,
+                                            rasterize_task_ROWS,
+                                            rasterize_task_BARLEY_WHEAT,
+                                            rasterize_task_HULLED,
+                                            rasterize_task_SBLOTCH_LMH,
+                                            save_task)
 
     # workflow
     workflow = EOWorkflow(workflow_nodes)
@@ -761,7 +877,7 @@ ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=E
 def verify_eopatch_loaded():
 
     eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
-    eopatch
+    print(eopatch)
 
     print(f"timestamps: {eopatch.timestamps}")
     data_keys = sorted(list(eopatch.data.keys()))
@@ -776,7 +892,20 @@ def verify_eopatch_loaded():
     eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON')) # the aoi masking polygon
 
     # *** Rasterized observations
-    eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT')) # trait raster
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'HEIGHT-CM')) # trait raster
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'AREA'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'BARLEY-WHEAT'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'DENSITY'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'DIAMETER'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'HULLED'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'ROWS'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'SBLOTCH-LMH'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'SBLOTCH-RATING'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'STEM-WEIGHT'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'WEIGHT'))
+
+
+
 
 # USER
 verify_eopatch_loaded()
@@ -835,10 +964,26 @@ def ask_preparePatches():
     print("Finalize and sample EOPatches?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        execute_prepared_workflow(CreatePatchPrepWorkflow(areas=area_grid(DATA_train),
-                                                          eopatch_dir=EOPATCH_TRAIN_DIR,
-                                                          eopatch_out_dir=EOPATCH_SAMPLES_DIR,
-                                                          trait='HEIGHT'))
+
+        traits = [
+            'HEIGHT-CM',
+            'AREA',
+            'BARLEY-WHEAT',
+            'DENSITY',
+            'DIAMETER',
+            'HULLED',
+            'ROWS',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
+            'STEM-WEIGHT',
+            'WEIGHT',
+        ]
+        for i in traits:
+            print(f"Preparing trait:{i}")
+            execute_prepared_workflow(CreatePatchPrepWorkflow(areas=area_grid(DATA_train),
+                                                              eopatch_dir=EOPATCH_TRAIN_DIR,
+                                                              eopatch_out_dir=EOPATCH_SAMPLES_DIR,
+                                                              trait=i))
 
 # USER
 ask_preparePatches()
@@ -851,7 +996,7 @@ ask_preparePatches()
 def sampledData(areas, eopatch_samples_dir, trait, show=False):
     """
     Takes grid of areas, a source of eopatches, and a single trait.
-    Concatenates all then Returns sampled_features and trait_eroded
+    Concatenates all eopatches then Returns sampled_features
     """
 
     sampled_eopatches = []

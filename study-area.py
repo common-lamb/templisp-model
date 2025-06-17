@@ -258,8 +258,8 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
             raise ValueError(f"Unexpected crs for file: {f} crs: {crs}")
 
 # USER
-dir_file_enforce()
-validate_input_files()
+# done dir_file_enforce()
+# done validate_input_files()
 
 ################
 # * AOI
@@ -528,7 +528,7 @@ def ask_loadgeotiffs(areas, eopatch_dir):
                                                             eopatch_dir=eopatch_dir ))
 
 # USER
-ask_loadgeotiffs(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
+# done ask_loadgeotiffs(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Load timestamps etc
 
@@ -680,7 +680,8 @@ def verify_eopatch_preloaded():
     eopatch = EOPatch.load(os.path.join(EOPATCH_TRAIN_DIR, 'eopatch_0'))
     print(eopatch)
 
-verify_eopatch_preloaded()
+# USER
+# done verify_eopatch_preloaded()
 
 def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     """
@@ -730,7 +731,7 @@ SAMPLE,NAME,HEIGHT-CM,ROW-TYPE,HULLESS-CONDITION,SBLOTCH-RATING,WEIGHT,DIAMETER,
     '''
 
     # USER
-    # add more rasterize_tasks as needed
+    # # done add more rasterize_tasks as needed
 
     # HEIGHT-CM
     rasterize_task_HEIGHT_CM = VectorToRasterTask(
@@ -868,7 +869,7 @@ def ask_loadDetails(areas, mask_file, eopatch_dir):
                                                               eopatch_dir=eopatch_dir))
 
 # USER
-ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=EOPATCH_TRAIN_DIR)
+# done ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Visualize layers
 #####
@@ -908,7 +909,7 @@ def verify_eopatch_loaded():
 
 
 # USER
-verify_eopatch_loaded()
+# done verify_eopatch_loaded()
 
 ################
 # * Prepare eopatch
@@ -986,7 +987,7 @@ def ask_preparePatches():
                                                               trait=i))
 
 # USER
-ask_preparePatches()
+# done ask_preparePatches()
 
 ################
 # * Create training data
@@ -1157,21 +1158,30 @@ def trainGBM(objective,
              x_train_GBM,
              y_train_GBM,):
 
-    learning_rate=0.1
     # count training classes for classification arg
     n_labels_unique = len(np.unique(y_train_GBM))
-    # count predictions for ranking arg
-    group_all = [len(x_train_GBM)]
+
+    learning_rate=0.1
+    multiclass_metric = "multi_logloss"
+    regression_metric = "mean_absolute_error"
 
     # Set up the model
     # metric options: https://lightgbm.readthedocs.io/en/stable/Parameters.html#metric
     if objective == 'multiclass':
-        model = lgb.LGBMClassifier(objective=objective, num_class=n_labels_unique, metric="multi_logloss",learning_rate=learning_rate, random_state=RNDM)
+        model = lgb.LGBMClassifier(objective=objective,
+                                   num_class=n_labels_unique,
+                                   metric=multiclass_metric,learning_rate=learning_rate,
+                                   random_state=RNDM)
         model.fit(x_train_GBM, y_train_GBM)
     elif objective == 'regression':
-        model = lgb.LGBMRegressor(objective=objective, metric="mean_absolute_error",learning_rate=learning_rate, random_state=RNDM)
+        model = lgb.LGBMRegressor(objective=objective,
+                                  metric=regression_metric,
+                                  learning_rate=learning_rate,
+                                  random_state=RNDM)
         model.fit(x_train_GBM, y_train_GBM)
     # elif objective == 'ranking':
+        # # count predictions for ranking arg
+        # group_all = [len(x_train_GBM)]
         # # not tested on ranked data
         # model = lgb.LGBMRanker(objective=objective, metric="ndcg",learning_rate=learning_rate, random_state=RNDM)
         # # must set the group(s) https://github.com/microsoft/LightGBM/issues/4808#issuecomment-1219044835
@@ -1187,22 +1197,48 @@ def ask_trainGBM():
     print("train GBM model?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name='HEIGHT')
-        trainGBM(objective='multiclass',
-                 area_name='test-area',
-                 trait_name='HEIGHT',
-                 model_type='GBM',
-                 x_train_GBM=x_train_GBM,
-                 y_train_GBM=y_train_GBM,)
-        trainGBM(objective='regression',
-                 area_name='test-area',
-                 trait_name='HEIGHT',
-                 model_type='GBM',
-                 x_train_GBM=x_train_GBM,
-                 y_train_GBM=y_train_GBM,)
+        traits_reg = [
+            'HEIGHT-CM',
+            'AREA',
+            'DENSITY',
+            'DIAMETER',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
+            'STEM-WEIGHT',
+            'WEIGHT',
+        ]
+
+        traits_cat = [
+            'BARLEY-WHEAT',
+            'HULLED',
+            'ROWS',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
+        ]
+
+        for i in traits_reg:
+            print(f"Training GBM on regression trait: {i}")
+            x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=i)
+            trainGBM(objective='regression',
+                     area_name='study-area',
+                     trait_name=i,
+                     model_type='GBM',
+                     x_train_GBM=x_train_GBM,
+                     y_train_GBM=y_train_GBM,)
+
+        for i in traits_cat:
+            print(f"Training GBM on categorical trait: {i}")
+            x_train_GBM, y_train_GBM, x_test_GBM, y_test_GBM = create_GBM_training_data(trait_name=i)
+            trainGBM(objective='multiclass',
+                     area_name='study-area',
+                     trait_name=i,
+                     model_type='GBM',
+                     x_train_GBM=x_train_GBM,
+                     y_train_GBM=y_train_GBM,)
+
 
 # USER
-ask_trainGBM()
+# done ask_trainGBM()
 
 
 ######### ** Validate
@@ -1718,7 +1754,7 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
             trait_name=trait_name,
             pred_type=objective)
 
-    if (GBM_flag) and (multiclass_flag):
+    if (GBM_flag) and (multiclass_flag or regression_flag):
         show_featureImportance(
             model_GBM=model,
             feature_names=feature_names,
@@ -1730,25 +1766,40 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
             pred_type=objective)
 
 # USER
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# regression
+# done testset_predict_validate(trait_name='HEIGHT-CM', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='AREA', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='DENSITY', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='DIAMETER', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='STEM-WEIGHT', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='WEIGHT', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# multiclass
+# done testset_predict_validate(trait_name='BARLEY-WHEAT', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='HULLED', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='ROWS', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# &&& index error
+# done testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
 # USER
 # test = area_grid(DATA_validate, show=True)
 # prepare eopatches for the validation area
-ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
-ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
+# done ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+# done ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 
 def verify_validation_eopatch():
     ""
     eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-    eopatch
+    print(eopatch)
 
     eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
 
-verify_validation_eopatch()
+# USER
+# done verify_validation_eopatch()
 
 class PredictPatchTask(EOTask):
     """
@@ -1866,34 +1917,57 @@ def ask_PredictPatches_GBM():
     print("predict validation area EOPatches?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
-                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
-                                                           area_name='test-area',
-                                                           trait_name='HEIGHT',
-                                                           objective='multiclass',
-                                                           model_type = 'GBM'))
-        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
-                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
-                                                           area_name='test-area',
-                                                           trait_name='HEIGHT',
-                                                           objective='regression',
-                                                           model_type = 'GBM'))
+        traits_reg = [
+            'HEIGHT-CM',
+            'AREA',
+            'DENSITY',
+            'DIAMETER',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
+            'STEM-WEIGHT',
+            'WEIGHT',
+        ]
+
+        traits_cat = [
+            'BARLEY-WHEAT',
+            'HULLED',
+            'ROWS',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
+        ]
+
+        for i in traits_reg:
+            print(f"Predicting {i}")
+            execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                               eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                               area_name='study-area',
+                                                               trait_name=i,
+                                                               objective='regression',
+                                                               model_type = 'GBM'))
+        for i in traits_cat:
+            print(f"Predicting {i}")
+            execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                               eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                               area_name='study-area',
+                                                               trait_name=i,
+                                                               objective='multiclass',
+                                                               model_type = 'GBM'))
 
 # USER
-ask_PredictPatches_GBM()
+# done ask_PredictPatches_GBM()
 
 #####
 # *** visualize prediction
 
 def verify_predictions_GBM():
     eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-    eopatch
-    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM'))
-    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_multiclass_GBM_PROBA'))
-    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_GBM'))
+    print(eopatch)
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_SBLOTCH-LMH_multiclass_GBM'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_SBLOTCH-LMH_multiclass_GBM_PROBA'))
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT-CM_regression_GBM'))
 
 # USER
-verify_predictions_GBM()
+# done verify_predictions_GBM()
 
 ######### ** Quantify prediction
 #####
@@ -1934,8 +2008,9 @@ def plot_prediction(grid_h, grid_w, trait_name, areas, model_type, testset_name,
     plt.show()
 
 # USER
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', testset_name='transfer', pred_type='multiclass', areas=area_grid(DATA_validate))
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='GBM', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
+# &&& not working
+# not done plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'SBLOTCH-LMH', model_type='GBM', testset_name='transfer', pred_type='multiclass', areas=area_grid(DATA_validate))
+# not done plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT-CM', model_type='GBM', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
@@ -2033,8 +2108,21 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, testset_name
     plt.show()
 
 # USER
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# regression
+# done plot_disagreement(trait_name = 'HEIGHT-CM', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'AREA', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'DENSITY', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'DIAMETER', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'STEM-WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# multiclass
+# done plot_disagreement(trait_name = 'BARLEY-WHEAT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'HULLED', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'ROWS', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
 
 #####
 # *** Quantify agreement
@@ -2169,8 +2257,22 @@ class_names: list of str names for classes which were predicted
             pred_type=objective)
 
 # USER
-validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# very slow to produce! est 8 h of full RAM usage
+# regression
+# done validationset_metrics(trait_name='HEIGHT-CM', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='AREA', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='DENSITY', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='DIAMETER', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# multiclass
+# done validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# done validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
 
 ################
 # * TST experiment
@@ -2196,46 +2298,46 @@ def trainTSAI(objective,
 
     # shared setup
     batch_size = 8192 # print(math.pow(2,13))
-    n_epochs = 400
+    n_epochs = 200
     batch_tfms = TSStandardize(by_var=True) # TST model requires normalization by var
-    inplace = False #true, transformation of training data, faster if it fits in mem
+    inplace = False #true, for transformation of training data in ram, faster if it fits. otherwise false
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not torch.cuda.is_available():
         print("WARNING: device is cpu!")
     seed = RNDM
-
     # Set up the model and learner
     if objective == 'multiclass':
         tfms  = [None, [Categorize()]]
         metrics = [accuracy]
         loss_func = LabelSmoothingCrossEntropyFlat()
-        dropout=0.3, # &&& hard coded
-        fc_dropout=0.5
+        dropout=0.1
+        fc_dropout=0.1
 
         # build unsupervised learner
         set_seed(seed, reproducible=True)
         dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
         dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
-        model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=.3, fc_dropout=.5)
+        model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=dropout, fc_dropout=fc_dropout)
         learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
 
     elif objective == 'regression':
         tfms  = [None, [TSRegression()]]
         metrics = [mae, rmse]
         loss_func = MSELossFlat()
-        dropout=0.3, # &&& hard coded
-        fc_dropout=0.5
+        dropout=0.1
+        fc_dropout=0.1
 
         set_seed(seed, reproducible=True)
         dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
         dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
-        model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=.3, fc_dropout=.5)
+        model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=dropout, fc_dropout=fc_dropout)
         learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
 
     else:
         raise ValueError(f"The provided objective ({objective}) is not recognized")
 
     # Train the model
+
     plt.ioff() # turn off the plot of learning rate
     lr = learn.lr_find()
     plt.ion()
@@ -2243,7 +2345,7 @@ def trainTSAI(objective,
     learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
     # post run check
     print(f"Optimal Learning Rate: {learning_rate}")
-    learn.plot_metrics()
+    learn.plot_metrics() # causes error if looping training cannot be hidden, saved or redirected
 
     if show:
         # visualize results
@@ -2252,40 +2354,82 @@ def trainTSAI(objective,
         interp = ClassificationInterpretation.from_learner(learn)
         interp.plot_confusion_matrix()
 
-    # Save learner
-    identifier = f"{area_name}-{trait_name}-{objective}-{model_type}.pkl"
-    model_path = os.path.join(MODELS_DIR, identifier)
-    learn.export(model_path)
+    # Save model metrics plot and learner
+    identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
+    learn.export(os.path.join(MODELS_DIR, f"{identifier}.pkl"))
 
 def ask_trainTSAI():
-    print("train TSAI model?")
+    print("train TSAI model? uncomment trait and type, see warning")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name='HEIGHT')
-        trainTSAI(objective='multiclass',
-                 area_name='test-area',
-                 trait_name='HEIGHT',
-                 model_type='TSAI',
-                 x_train_TSAI=x_train_TSAI,
-                 y_train_TSAI=y_train_TSAI,
-                 splits = splits)
-        trainTSAI(objective='regression',
-                 area_name='test-area',
-                 trait_name='HEIGHT',
-                 model_type='TSAI',
-                 x_train_TSAI=x_train_TSAI,
-                 y_train_TSAI=y_train_TSAI,
-                 splits = splits)
+
+        # WARNING
+        # learn.plot_metrics() in trainTSAI causes serious freezing error if looping through multiple training runs
+        # the training runs will continue if you switch to TTY, but the run plots are not recoverable and the system must be rebooted after the runs
+
+        traits_reg = [
+            # 'HEIGHT-CM',
+            # 'AREA',
+            # 'DENSITY',
+            # 'DIAMETER',
+            # 'SBLOTCH-LMH',
+            # 'SBLOTCH-RATING',
+            # 'STEM-WEIGHT',
+            # 'WEIGHT',
+        ]
+
+        traits_cat = [
+            # 'BARLEY-WHEAT',
+            # 'HULLED',
+            # 'ROWS',
+            # 'SBLOTCH-LMH',
+            # 'SBLOTCH-RATING',
+        ]
+
+        # for i in traits_reg:
+        #     print(f"Training {i}")
+        #     x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name=i)
+        #     trainTSAI(objective='regression',
+        #              area_name='study-area',
+        #              trait_name=i,
+        #              model_type='TSAI',
+        #              x_train_TSAI=x_train_TSAI,
+        #              y_train_TSAI=y_train_TSAI,
+        #              splits = splits)
+
+        # for i in traits_cat:
+        #     print(f"Training {i}")
+        #     x_train_TSAI, y_train_TSAI, splits = create_TSAI_training_data(trait_name=i)
+        #     trainTSAI(objective='multiclass',
+        #              area_name='study-area',
+        #              trait_name=i,
+        #              model_type='TSAI',
+        #              x_train_TSAI=x_train_TSAI,
+        #              y_train_TSAI=y_train_TSAI,
+        #              splits = splits)
 
 # USER
-ask_trainTSAI()
+# done ask_trainTSAI()
 
 ######### ** Validate
 # quantify prediction
 
 # USER
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# regression
+# done testset_predict_validate(trait_name='HEIGHT-CM', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='AREA', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='DENSITY', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='DIAMETER', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='STEM-WEIGHT', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='WEIGHT', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# multiclass
+# done testset_predict_validate(trait_name='BARLEY-WHEAT', area_name='study-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='HULLED', area_name='study-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='ROWS', area_name='study-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='multiclass', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
@@ -2293,8 +2437,10 @@ testset_predict_validate(trait_name='HEIGHT', area_name='test-area', objective='
 # show validation area segmentation
 # test = area_grid(DATA_validate, show=True)
 
+# OPTIONAL
+# TSAI will overwrites GBM validation eopatches, may be needed, currently proceeding without this
+#
 # Prepare eopatches for the TSAI validation area
-# TSAI overwrites GBM, may be needed, currently proceeding without this
 # ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
 # ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 # eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
@@ -2304,18 +2450,45 @@ def ask_PredictPatches_TSAI():
     print("predict validation area EOPatches?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
-        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
-                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
-                                                           area_name='test-area',
-                                                           trait_name='HEIGHT',
-                                                           objective='regression',
-                                                           model_type = 'TSAI'))
-        execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
-                                                           eopatch_dir=EOPATCH_VALIDATE_DIR,
-                                                           area_name='test-area',
-                                                           trait_name='HEIGHT',
-                                                           objective='multiclass',
-                                                           model_type = 'TSAI'))
+        traits_reg = [
+            'HEIGHT-CM',
+            # 'AREA',
+            # 'DENSITY',
+            # 'DIAMETER',
+            # 'SBLOTCH-LMH',
+            # 'SBLOTCH-RATING',
+            # 'STEM-WEIGHT',
+            # 'WEIGHT',
+        ]
+
+        traits_cat = [
+            # 'BARLEY-WHEAT',
+            # 'HULLED',
+            # 'ROWS',
+            # 'SBLOTCH-LMH',
+            # 'SBLOTCH-RATING',
+        ]
+
+        for i in traits_reg:
+            print(f"Predicting {i}")
+            execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+                                                               eopatch_dir=EOPATCH_VALIDATE_DIR,
+                                                               area_name='study-area',
+                                                               trait_name=i,
+                                                               objective='regression',
+                                                               model_type = 'TSAI'))
+
+        # for i in traits_cat:
+        #     print(f"Predicting {i}")
+        #     execute_prepared_workflow(CreatePredictionWorkflow(areas=area_grid(DATA_validate),
+        #                                                        eopatch_dir=EOPATCH_VALIDATE_DIR,
+        #                                                        area_name='study-area',
+        #                                                        trait_name=i,
+        #                                                        objective='multiclass',
+        #                                                        model_type = 'TSAI'))
+
+
+
 
 # USER
 ask_PredictPatches_TSAI()

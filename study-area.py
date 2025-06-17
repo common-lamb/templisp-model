@@ -2499,9 +2499,8 @@ ask_PredictPatches_TSAI()
 def verify_predictions_TSAI():
     ""
     eopatch = EOPatch.load(os.path.join(EOPATCH_VALIDATE_DIR, 'eopatch_0'))
-    eopatch
-    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI'))
-    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT_regression_TSAI_PROBA'))
+    print(eopatch)
+    eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT-CM_regression_TSAI'))
 
 # USER
 verify_predictions_TSAI()
@@ -2511,22 +2510,47 @@ verify_predictions_TSAI()
 # *** Visualize predicted trait
 
 # USER
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
-plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT', model_type='TSAI', testset_name='transfer', pred_type='multiclass', areas=area_grid(DATA_validate))
+# &&& works?
+plot_prediction(grid_h = 1, grid_w = 2, trait_name = 'HEIGHT-CM', model_type='TSAI', testset_name='transfer', pred_type='regression', areas=area_grid(DATA_validate))
 
 #####
 # *** Visualize trait diff
 
 # USER
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'HEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
+# regression &&&
+plot_disagreement(trait_name = 'HEIGHT-CM', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'AREA', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'DENSITY', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'DIAMETER', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'STEM-WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+plot_disagreement(trait_name = 'WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="regression")
+# multiclass &&&
+plot_disagreement(trait_name = 'BARLEY-WHEAT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
+plot_disagreement(trait_name = 'HULLED', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
+plot_disagreement(trait_name = 'ROWS', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
+plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
+plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='TSAI', testset_name='transfer', pred_type="multiclass")
 
 #####
 # *** Quantify agreement
 # USER
-
-validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='HEIGHT', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+# regression &&&
+validationset_metrics(trait_name='', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='AREA', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='DENSITY', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='DIAMETER', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+# multiclass &&&
+validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
 
 ######### ** Export to geotiff all for model comparison
 
@@ -2626,11 +2650,49 @@ def merge_exports(trait_name, objective, model_type):
 def ask_ExportPatches():
 
                 # set both objective and model_type are None to export only trait map
-    exports = [{'trait_name': 'HEIGHT', 'objective': None, 'model_type': None},
-               {'trait_name': 'HEIGHT', 'objective': 'regression', 'model_type': 'TSAI'},
-               {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'TSAI'},
-               {'trait_name': 'HEIGHT', 'objective': 'regression', 'model_type': 'GBM'},
-               {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'GBM'}]
+    # exports = [{'trait_name': 'HEIGHT', 'objective': None, 'model_type': None},
+    #            {'trait_name': 'HEIGHT', 'objective': 'regression', 'model_type': 'TSAI'},
+    #            {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'TSAI'},
+    #            {'trait_name': 'HEIGHT', 'objective': 'regression', 'model_type': 'GBM'},
+    #            {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'GBM'}]
+
+    models = ["TSAI", "GBM"]
+    objectives = ["regression", "multiclass"]
+    traits_reg = [
+        'HEIGHT-CM',
+        'AREA',
+        'DENSITY',
+        'DIAMETER',
+        'SBLOTCH-LMH',
+        'SBLOTCH-RATING',
+        'STEM-WEIGHT',
+        'WEIGHT',
+    ]
+    traits_cat = [
+        'BARLEY-WHEAT',
+        'HULLED',
+        'ROWS',
+        'SBLOTCH-LMH',
+        'SBLOTCH-RATING',
+    ]
+
+    for i in models:
+        print(i)
+
+    exports = []
+
+    for m in models:
+        for o in objectives:
+            for tr in traits_reg:
+                exports.append({'trait_name': tr, 'objective': None , 'model_type': None })
+                exports.append({'trait_name': tr, 'objective': o , 'model_type': m })
+            for tc in traits_cat:
+                exports.append({'trait_name': tc, 'objective': None , 'model_type': None })
+                exports.append({'trait_name': tc, 'objective': o , 'model_type': m })
+
+    # deduplicate if repeats in reg and cat
+    exports = list(set(exports))
+    # &&& test if exports is as expected
 
     print("export predictions?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'

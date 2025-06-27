@@ -2647,7 +2647,7 @@ def merge_exports(trait_name, objective, model_type):
         os.remove(f)
 
 
-def ask_ExportPatches():
+def ask_ExportPatches(show=False):
 
                 # set both objective and model_type are None to export only trait map
     # exports = [{'trait_name': 'HEIGHT', 'objective': None, 'model_type': None},
@@ -2657,7 +2657,7 @@ def ask_ExportPatches():
     #            {'trait_name': 'HEIGHT', 'objective': 'multiclass', 'model_type': 'GBM'}]
 
     models = ["TSAI", "GBM"]
-    objectives = ["regression", "multiclass"]
+    # objectives = ["regression", "multiclass"]
     traits_reg = [
         'HEIGHT-CM',
         'AREA',
@@ -2676,23 +2676,30 @@ def ask_ExportPatches():
         'SBLOTCH-RATING',
     ]
 
-    for i in models:
-        print(i)
-
     exports = []
 
-    for m in models:
-        for o in objectives:
-            for tr in traits_reg:
-                exports.append({'trait_name': tr, 'objective': None , 'model_type': None })
-                exports.append({'trait_name': tr, 'objective': o , 'model_type': m })
-            for tc in traits_cat:
-                exports.append({'trait_name': tc, 'objective': None , 'model_type': None })
-                exports.append({'trait_name': tc, 'objective': o , 'model_type': m })
-
     # deduplicate if repeats in reg and cat
-    exports = list(set(exports))
-    # &&& test if exports is as expected
+    for m in models:
+        for t in traits_reg:
+            trait = {'trait_name': t, 'objective': None , 'model_type': None }
+            prediction =  {'trait_name': t, 'objective': 'regression' , 'model_type': m }
+            if trait not in exports:
+                exports.append(trait)
+            if prediction not in exports:
+                exports.append(prediction)
+        for t in traits_cat:
+            trait = {'trait_name': t, 'objective': None , 'model_type': None }
+            prediction = {'trait_name': t, 'objective': 'multiclass', 'model_type': m }
+            if trait not in exports:
+                exports.append(trait)
+            if prediction not in exports:
+                exports.append(prediction)
+
+    if show:
+        for i in exports:
+            print(f"exporting: {i}")
+        raise ValueError("early exit")
+
 
     print("export predictions?")
     proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
@@ -2709,6 +2716,8 @@ def ask_ExportPatches():
                           model_type =e['model_type'])
 
 # USER
+ask_ExportPatches(show=True)
+# est 15 mins per export
 ask_ExportPatches()
 
 ############################################ Fin

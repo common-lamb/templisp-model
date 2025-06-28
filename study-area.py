@@ -152,8 +152,8 @@ EXPECTED_N_TIFS = 630
 EXPECTED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue', 'ndvi', 'sentera_ndre'] # check for expected unique indices, order irrelevant
 USED_INDICES = ['nir', 'red_edge', 'red', 'green', 'blue'] # set order and spectra to use, must be subset of expected
 
-SAMPLE_RATE = 0.01 # &&& percentage of eopatches sampled for training. in (0.0-1.0)
-TEST_PERCENTAGE = 0.20 # perventage of test-train set to use for testing. in (0.0-1.0)
+SAMPLE_RATE = 1.0 # percentage of eopatches sampled for training. in (0.0-1.0)
+TEST_PERCENTAGE = 0.20 # percentage of test-train set to use for testing. in (0.0-1.0)
 
 NO_DATA_VALUE = -9999 #used for export, ensure no collision with expected data
 
@@ -2547,7 +2547,7 @@ validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective
 validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
 validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
 validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
-# multiclass &&&
+# multiclass
 validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
 validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])
 validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='TSAI', testset_name='transfer', class_names=['black','white'])

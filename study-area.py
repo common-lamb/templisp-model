@@ -1,4 +1,4 @@
-#start emacs from model env in shell
+# in shell with environment: model, start emacs
 # M-x spacemacs/force-init-spacemacs-env
 # , n a activate model env
 # , ' open inferior repl
@@ -258,8 +258,8 @@ def validate_input_files(tifs=input_tifs(), expected_n_tifs=EXPECTED_N_TIFS, exp
             raise ValueError(f"Unexpected crs for file: {f} crs: {crs}")
 
 # USER
-dir_file_enforce()
-validate_input_files()
+# done dir_file_enforce()
+# done validate_input_files()
 
 ################
 # * AOI
@@ -528,7 +528,7 @@ def ask_loadgeotiffs(areas, eopatch_dir):
                                                             eopatch_dir=eopatch_dir ))
 
 # USER
-ask_loadgeotiffs(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
+# done ask_loadgeotiffs(areas=area_grid(DATA_train), eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Load timestamps etc
 
@@ -681,7 +681,7 @@ def verify_eopatch_preloaded():
     print(eopatch)
 
 # USER
-verify_eopatch_preloaded()
+# done verify_eopatch_preloaded()
 
 def CreateDetailsLoaderWorkflow(areas, mask_file, observations, eopatch_dir):
     """
@@ -869,7 +869,7 @@ def ask_loadDetails(areas, mask_file, eopatch_dir):
                                                               eopatch_dir=eopatch_dir))
 
 # USER
-ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=EOPATCH_TRAIN_DIR)
+# done ask_loadDetails(areas=area_grid(DATA_train), mask_file=DATA_train, eopatch_dir=EOPATCH_TRAIN_DIR)
 
 ######### ** Visualize layers
 #####
@@ -909,7 +909,7 @@ def verify_eopatch_loaded():
 
 
 # USER
-verify_eopatch_loaded()
+# done verify_eopatch_loaded()
 
 ################
 # * Prepare eopatch
@@ -987,7 +987,7 @@ def ask_preparePatches():
                                                               trait=i))
 
 # USER
-ask_preparePatches()
+# done ask_preparePatches()
 
 ################
 # * Create training data
@@ -1236,10 +1236,8 @@ def ask_trainGBM():
                      x_train_GBM=x_train_GBM,
                      y_train_GBM=y_train_GBM,)
 
-
 # USER
-ask_trainGBM()
-
+# done ask_trainGBM()
 
 ######### ** Validate
 
@@ -1313,10 +1311,14 @@ def report_Metrics_Classification(y_test, predicted_labels_test, class_names, mo
         print(f"found: n: {len(class_labels)} class labels: {class_labels} ")
         class_names = class_labels
 
+    predictions = predicted_labels_test
+    true_labels = y_test
 
-    mask = np.in1d(predicted_labels_test, y_test)
-    predictions = predicted_labels_test[mask]
-    true_labels = y_test[mask]
+    # mask any unexpected values in predictions, then drop from both
+    # ie. keep matching locations where predicted labels are in the expected labels set
+    mask_p_in_t = np.in1d(predictions, true_labels)
+    predictions = predictions[mask_p_in_t]
+    true_labels = true_labels[mask_p_in_t]
 
     # Extract and display metrics
     accuracy = metrics.accuracy_score(true_labels, predictions)
@@ -1576,7 +1578,7 @@ def show_ROCAUC(model_GBM, class_names, y_test_GBM, y_train_GBM, x_test_GBM, mod
     class_labels = np.unique(np.hstack([y_test_GBM, y_train_GBM]))
     labels_binarized = preprocessing.label_binarize(y_test_GBM, classes=class_labels)
     scores_test = model_GBM.predict_proba(x_test_GBM)
-    colors = plt.cm.Set1.colors
+    colors = plt.cm.tab20.colors
 
     # replace class_names if unexpected count
     if len(class_names) != len(class_labels):
@@ -1689,22 +1691,6 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
         raise ValueError('Model type not recognized')
 
     if (GBM_flag or TSAI_flag ) and (multiclass_flag):
-        show_ClassBalance(y_train=y_train,
-                          class_names=class_names,
-                          model_type=model_type,
-                          testset_name=testset_name,
-                          trait_name=trait_name,
-                          pred_type=objective)
-
-    if (GBM_flag or TSAI_flag ) and (regression_flag):
-        show_ValueBalance(y_train=y_train,
-                          class_names=class_names,
-                          model_type=model_type,
-                          testset_name=testset_name,
-                          trait_name=trait_name,
-                          pred_type=objective)
-
-    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
         report_Metrics_Classification(
             y_test=y_test,
             predicted_labels_test=predicted_test,
@@ -1722,6 +1708,22 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
             testset_name=testset_name,
             trait_name=trait_name,
             pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (multiclass_flag):
+        show_ClassBalance(y_train=y_train,
+                          class_names=class_names,
+                          model_type=model_type,
+                          testset_name=testset_name,
+                          trait_name=trait_name,
+                          pred_type=objective)
+
+    if (GBM_flag or TSAI_flag ) and (regression_flag):
+        show_ValueBalance(y_train=y_train,
+                          class_names=class_names,
+                          model_type=model_type,
+                          testset_name=testset_name,
+                          trait_name=trait_name,
+                          pred_type=objective)
 
     if (GBM_flag or TSAI_flag ) and (multiclass_flag):
         show_std_T_confusionMatrix(
@@ -1742,6 +1744,17 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
             testset_name=testset_name,
             pred_type=objective)
 
+    if (GBM_flag) and (multiclass_flag or regression_flag):
+        show_featureImportance(
+            model_GBM=model,
+            feature_names=feature_names,
+            t_dim=t_dim,
+            f_dim=f_dim,
+            model_type=model_type,
+            testset_name=testset_name,
+            trait_name=trait_name,
+            pred_type=objective)
+
     if (GBM_flag) and (multiclass_flag):
         show_ROCAUC(
             model_GBM=model,
@@ -1754,42 +1767,30 @@ def testset_predict_validate(trait_name, area_name, objective, model_type, tests
             trait_name=trait_name,
             pred_type=objective)
 
-    if (GBM_flag) and (multiclass_flag or regression_flag):
-        show_featureImportance(
-            model_GBM=model,
-            feature_names=feature_names,
-            t_dim=t_dim,
-            f_dim=f_dim,
-            model_type=model_type,
-            testset_name=testset_name,
-            trait_name=trait_name,
-            pred_type=objective)
-
 # USER
 # regression
-testset_predict_validate(trait_name='HEIGHT-CM', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='AREA', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='DENSITY', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='DIAMETER', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='STEM-WEIGHT', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='WEIGHT', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='HEIGHT-CM', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='AREA', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='DENSITY', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='DIAMETER', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='STEM-WEIGHT', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='WEIGHT', area_name='study-area', objective='regression', model_type='GBM', testset_name='holdout', class_names=['black','white'])
 # multiclass
-testset_predict_validate(trait_name='BARLEY-WHEAT', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='HULLED', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='ROWS', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
-# &&& index error
-testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='BARLEY-WHEAT', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='HULLED', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='ROWS', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-LMH', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
+# done testset_predict_validate(trait_name='SBLOTCH-RATING', area_name='study-area', objective='multiclass', model_type='GBM', testset_name='holdout', class_names=['black','white'])
 
 ######### ** Predict
 
 # USER
 # test = area_grid(DATA_validate, show=True)
 # prepare eopatches for the validation area
-ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
-ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
+# done ask_loadgeotiffs(areas=area_grid(DATA_validate), eopatch_dir=EOPATCH_VALIDATE_DIR)
+# done ask_loadDetails(areas=area_grid(DATA_validate), mask_file=DATA_validate, eopatch_dir=EOPATCH_VALIDATE_DIR)
 
 def verify_validation_eopatch():
     ""
@@ -1954,7 +1955,7 @@ def ask_PredictPatches_GBM():
                                                                model_type = 'GBM'))
 
 # USER
-ask_PredictPatches_GBM()
+# done ask_PredictPatches_GBM()
 
 #####
 # *** visualize prediction
@@ -1967,7 +1968,7 @@ def verify_predictions_GBM():
     eopatch.plot((FeatureType.DATA_TIMELESS, 'PREDICTED_HEIGHT-CM_regression_GBM'))
 
 # USER
-verify_predictions_GBM()
+# done verify_predictions_GBM()
 
 ######### ** Quantify prediction
 #####
@@ -2109,20 +2110,20 @@ def plot_disagreement(areas, trait_name, inspect_ratio, model_type, testset_name
 
 # USER
 # regression
-plot_disagreement(trait_name = 'HEIGHT-CM', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'AREA', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'DENSITY', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'DIAMETER', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'STEM-WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
-plot_disagreement(trait_name = 'WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'HEIGHT-CM', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'AREA', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'DENSITY', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'DIAMETER', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'STEM-WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
+# done plot_disagreement(trait_name = 'WEIGHT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="regression")
 # multiclass
-plot_disagreement(trait_name = 'BARLEY-WHEAT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
-plot_disagreement(trait_name = 'HULLED', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
-plot_disagreement(trait_name = 'ROWS', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
-plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
-plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'BARLEY-WHEAT', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'HULLED', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'ROWS', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'SBLOTCH-LMH', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
+# done plot_disagreement(trait_name = 'SBLOTCH-RATING', areas = area_grid(DATA_validate), inspect_ratio=0.99, model_type='GBM', testset_name='transfer', pred_type="multiclass")
 
 #####
 # *** Quantify agreement
@@ -2204,19 +2205,27 @@ class_names: list of str names for classes which were predicted
     # get prediction data
     x_train, y_train, x_test, y_test, predicted_test  = create_validation_data(trait_name=trait_name, objective=objective, model_type=model_type)
 
-    # deal with masked values in validation data: y_test, predicted_labels_test
-
+    # deal with masked values in validation data: y_test, predicted_test
     predicted_test = predicted_test.astype(float) # convert to guarantee int array is float
     predicted_test = predicted_test.filled(np.nan) # fill masked positions
     y_test = y_test.astype(float)
     y_test = y_test.filled(np.nan)
+
+    # deal with nan values in validation data: y_test, predicted_test
+    # mask any NaN in y_test then drop from both
+    mask_num_t = ~np.isnan(y_test)
+    predicted_test = predicted_test[mask_num_t]
+    y_test = y_test[mask_num_t]
+    # mask any NaN in predicted_test then drop from both
+    mask_num_t = ~np.isnan(predicted_test)
+    predicted_test = predicted_test[mask_num_t]
+    y_test = y_test[mask_num_t]
 
     # quantify prediction
     GBM_flag = model_type == 'GBM'
     TSAI_flag = model_type == 'TSAI'
     regression_flag = objective == 'regression'
     multiclass_flag = objective == 'multiclass'
-
 
     if (GBM_flag or TSAI_flag ) and (multiclass_flag):
         report_Metrics_Classification(
@@ -2259,20 +2268,21 @@ class_names: list of str names for classes which were predicted
 # USER
 # very slow to produce! est 8 h of full RAM usage
 # regression
-validationset_metrics(trait_name='HEIGHT-CM', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='AREA', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='DENSITY', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='DIAMETER', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='HEIGHT-CM', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='AREA', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='DENSITY', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='DIAMETER', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
 # multiclass
-validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
-validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white', 'secret third thing'])
+validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# vvv
+validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
 
 ################
 # * TST experiment

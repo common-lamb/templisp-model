@@ -1800,7 +1800,7 @@ def verify_validation_eopatch():
     eopatch.plot((FeatureType.MASK_TIMELESS, 'IN_POLYGON'))
 
 # USER
-verify_validation_eopatch()
+#done verify_validation_eopatch()
 
 class PredictPatchTask(EOTask):
     """
@@ -2268,21 +2268,20 @@ class_names: list of str names for classes which were predicted
 # USER
 # very slow to produce! est 8 h of full RAM usage
 # regression
-validationset_metrics(trait_name='HEIGHT-CM', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='AREA', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='DENSITY', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='DIAMETER', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='HEIGHT-CM', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='AREA', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='DENSITY', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='DIAMETER', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='STEM-WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='WEIGHT', area_name='test-area', objective='regression', model_type='GBM', testset_name='transfer', class_names=['black','white'])
 # multiclass
-validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
-# vvv
-validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='BARLEY-WHEAT', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='HULLED', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='ROWS', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='SBLOTCH-LMH', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
+# done validationset_metrics(trait_name='SBLOTCH-RATING', area_name='test-area', objective='multiclass', model_type='GBM', testset_name='transfer', class_names=['black','white'])
 
 ################
 # * TST experiment
@@ -2368,9 +2367,13 @@ def trainTSAI(objective,
     identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
     learn.export(os.path.join(MODELS_DIR, f"{identifier}.pkl"))
 
-def ask_trainTSAI():
+def ask_trainTSAI(override = False):
     print("train TSAI model? see warning and uncomment trait ")
-    proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
+    if override:
+        proceed = True
+        print("WARNING: ask overridden!")
+    else:
+        proceed = input("Do you want to proceed? (y/n): ").lower().strip() == 'y'
     if proceed:
 
         # WARNING
@@ -2379,22 +2382,22 @@ def ask_trainTSAI():
         # a single trait run at a time will operate correctly
 
         traits_reg = [
-            # 'HEIGHT-CM',
-            # 'AREA',
-            # 'DENSITY',
-            # 'DIAMETER',
-            # 'SBLOTCH-LMH',
-            # 'SBLOTCH-RATING',
-            # 'STEM-WEIGHT',
-            # 'WEIGHT',
+            'HEIGHT-CM',
+            'AREA',
+            'DENSITY',
+            'DIAMETER',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
+            'STEM-WEIGHT',
+            'WEIGHT',
         ]
 
         traits_cat = [
-            # 'BARLEY-WHEAT',
-            # 'HULLED',
-            # 'ROWS',
-            # 'SBLOTCH-LMH',
-            # 'SBLOTCH-RATING',
+            'BARLEY-WHEAT',
+            'HULLED',
+            'ROWS',
+            'SBLOTCH-LMH',
+            'SBLOTCH-RATING',
         ]
 
         for i in traits_reg:
@@ -2419,14 +2422,24 @@ def ask_trainTSAI():
                      y_train_TSAI=y_train_TSAI,
                      splits = splits)
 
+# this redirect makes it possible to switch to TTY and let the whole series of trainings run.
+import contextlib
+
+def redirect_AT_TSAI():
+    with open ('/bulk-2/model_output/models/training.log', 'a') as log_file:
+        with contextlib.redirect_stdout(log_file):
+            print(f"\nRedirecting training run output to file.\n")
+            ask_trainTSAI(override = True)
+
 # USER
-ask_trainTSAI()
+redirect_AT_TSAI()
 
 ######### ** Validate
 # quantify prediction
 
 # USER
 # regression
+
 testset_predict_validate(trait_name='HEIGHT-CM', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 testset_predict_validate(trait_name='AREA', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 testset_predict_validate(trait_name='DENSITY', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])

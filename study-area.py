@@ -81,6 +81,7 @@ from geopandas.plotting import plot_dataframe
 import joblib
 import itertools
 import datetime
+import contextlib
 
 import pandas as pd
 import numpy as np
@@ -2338,7 +2339,7 @@ def trainTSAI(objective,
 
         set_seed(seed, reproducible=True)
         dsets = TSDatasets(x_train_TSAI, y_train_TSAI, splits=splits, tfms=tfms, inplace=inplace)
-        dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=0)
+        dls = TSDataLoaders.from_dsets(dsets.train, dsets.valid, device=device, bs=batch_size, batch_tfms=batch_tfms, num_workers=8)
         model = TST(c_in=dls.vars, c_out=dls.c, seq_len=dls.len, dropout=dropout, fc_dropout=fc_dropout)
         learn = Learner(dls, model, loss_func=loss_func, metrics=metrics)
 
@@ -2354,7 +2355,7 @@ def trainTSAI(objective,
     learn.fit_one_cycle(n_epochs, lr_max=learning_rate)
     # post run check
     print(f"Optimal Learning Rate: {learning_rate}")
-    learn.plot_metrics() # causes error if looping training cannot be hidden, saved or redirected
+    # learn.plot_metrics() # &&& # causes error if looping training cannot be hidden, saved or redirected
 
     if show:
         # visualize results
@@ -2367,9 +2368,9 @@ def trainTSAI(objective,
     identifier = f"{area_name}-{trait_name}-{objective}-{model_type}"
     learn.export(os.path.join(MODELS_DIR, f"{identifier}.pkl"))
 
-def ask_trainTSAI(override = False):
+def ask_trainTSAI(overrideAsk = False):
     print("train TSAI model? see warning and uncomment trait ")
-    if override:
+    if overrideAsk:
         proceed = True
         print("WARNING: ask overridden!")
     else:
@@ -2382,22 +2383,22 @@ def ask_trainTSAI(override = False):
         # a single trait run at a time will operate correctly
 
         traits_reg = [
-            'HEIGHT-CM',
-            'AREA',
-            'DENSITY',
-            'DIAMETER',
-            'SBLOTCH-LMH',
-            'SBLOTCH-RATING',
-            'STEM-WEIGHT',
-            'WEIGHT',
+            # 'HEIGHT-CM',
+            # 'AREA',
+            # 'DENSITY',
+            # 'DIAMETER',
+            # 'SBLOTCH-LMH',
+            # 'SBLOTCH-RATING',
+            # 'STEM-WEIGHT',
+            # 'WEIGHT',
         ]
 
         traits_cat = [
-            'BARLEY-WHEAT',
-            'HULLED',
-            'ROWS',
-            'SBLOTCH-LMH',
-            'SBLOTCH-RATING',
+            # 'BARLEY-WHEAT',
+            # 'HULLED',
+            # 'ROWS',
+            # 'SBLOTCH-LMH',
+            # 'SBLOTCH-RATING',
         ]
 
         for i in traits_reg:
@@ -2422,24 +2423,26 @@ def ask_trainTSAI(override = False):
                      y_train_TSAI=y_train_TSAI,
                      splits = splits)
 
-# this redirect makes it possible to switch to TTY and let the whole series of trainings run.
-import contextlib
 
+# this log redirect makes it possible to switch to TTY and let the whole series of trainings run.
 def redirect_AT_TSAI():
     with open ('/bulk-2/model_output/models/training.log', 'a') as log_file:
         with contextlib.redirect_stdout(log_file):
             print(f"\nRedirecting training run output to file.\n")
-            ask_trainTSAI(override = True)
+            ask_trainTSAI(overrideAsk = True)
 
 # USER
-redirect_AT_TSAI()
+# done redirect_AT_TSAI()
+
+
+# &&& vvv
+# get curves &&&
 
 ######### ** Validate
 # quantify prediction
 
 # USER
 # regression
-
 testset_predict_validate(trait_name='HEIGHT-CM', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 testset_predict_validate(trait_name='AREA', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
 testset_predict_validate(trait_name='DENSITY', area_name='study-area', objective='regression', model_type='TSAI', testset_name='holdout', class_names=['black','white'])
